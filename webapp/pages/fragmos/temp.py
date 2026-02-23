@@ -35,7 +35,7 @@ class If(drawpyo.diagram.Object):
         self.value = value
         self.width = 200 * (( len(value) // 50 ) + 1)
         self.height = 80 * (( len(value) // 50 ) + 1)
-        self.position = (x + self.width// 2, y)
+        self.position = (x, y)
         self.apply_style_string("whiteSpace=wrap;html=1;shape=rhombus;")
 
 class While(drawpyo.diagram.Object):
@@ -147,130 +147,69 @@ class Text_format(drawpyo.diagram.Object):
 
 
 class Render():
-    def __init__(self, page, nodes, x=0, y=0, prev_obj=None, entry_root=None):
-        self.page = page
-        self.nodes = nodes
-        self.perv_obj_xy = (x, y)
-        self.step_y = 75
-        self.prev_obj = prev_obj
-        self.first_obj = None
-        self.entry_root = entry_root
-
-    def _place(self, obj):
-        if self.first_obj is None:
-            self.first_obj = obj
-        self.prev_obj = obj
-        self.perv_obj_xy = obj.position
-
-    def _connect(self, source, target, root=None):
-        if self.first_obj is None:
-            root = self.entry_root
-        Pointer(self.page, source, target, root=root)
-
+    def __init__(self, page, nodes,):
+        self.page   = page
+        self.nodes  = nodes
+        self.perv_obj_xy = (100,0)        
+        self.step_x = 0  
+        self.step_y = 0 
     def render(self):
         for node in self.nodes:
-
             if node["type"] == "start":
-                obj = Base(self.page, node["value"], self.perv_obj_xy[0], self.perv_obj_xy[1])
-                if self.prev_obj:
-                    self._connect(self.prev_obj, obj)
-                self._place(obj)
+                Base(self.page, node["value"],self.perv_obj_xy[0] + self.step_x, self.perv_obj_xy[1] + self.step_y)
+                self.perv_obj_xy = (self.perv_obj_xy[0] + self.step_x, self.perv_obj_xy[1] + self.step_y)
+            if node["type"] == "process":
+                Proccess(self.page, node["value"], self.perv_obj_xy[0] + self.step_x, self.perv_obj_xy[1] + self.step_y)
+                self.perv_obj_xy = (self.perv_obj_xy[0] + self.step_x, self.perv_obj_xy[1] + self.step_y)
+            if node["type"] == "stop":
+                Base(self.page, node["value"], self.perv_obj_xy[0] + self.step_x, self.perv_obj_xy[1] + self.step_y)
+                self.perv_obj_xy = (self.perv_obj_xy[0] + self.step_x, self.perv_obj_xy[1] + self.step_y)
 
-            elif node["type"] == "stop":
-                obj = Base(self.page, node["value"], self.perv_obj_xy[0], self.perv_obj_xy[1] + self.step_y)
-                self._connect(self.prev_obj, obj)
-                self._place(obj)
-
-            elif node["type"] == "process":
-                obj = Proccess(self.page, node["value"], self.perv_obj_xy[0], self.perv_obj_xy[1] + self.step_y)
-                self._connect(self.prev_obj, obj)
-                self._place(obj)
-
-            elif node["type"] == "execute":
-                obj = Execute(self.page, node["value"], self.perv_obj_xy[0], self.perv_obj_xy[1] + self.step_y)
-                self._connect(self.prev_obj, obj)
-                self._place(obj)
-
-            elif node["type"] == "if":
-                if_obj = If(self.page, node["value"], self.perv_obj_xy[0], self.perv_obj_xy[1] + self.step_y)
-                if self.prev_obj:
-                    self._connect(self.prev_obj, if_obj)
-                self._place(if_obj)
-
-                # центр ромба
-                if_cx = if_obj.position[0] + if_obj.width // 2
-                if_cy = if_obj.position[1] + if_obj.height // 2
-
-                # ветка YES — правее правого края ромба, Y на уровне центра
-                yes_x = if_obj.position[0] + if_obj.width + 80
-                yes_r = Render(self.page, node["children"], x=yes_x, y=if_cy, prev_obj=if_obj, entry_root="yes")
-                yes_r.render()
-
-                # ветка NO — левее левого края ромба, Y на уровне центра
-                if node.get("else_children"):
-                    no_x = if_obj.position[0] - 200 - 80
-                    no_r = Render(self.page, node["else_children"], x=no_x, y=if_cy, prev_obj=if_obj, entry_root="no")
-                    no_r.render()
-                    no_end_obj = no_r.prev_obj
-                    no_end_y = no_r.perv_obj_xy[1]
-                else:
-                    no_end_obj = None
-                    no_end_y = if_cy
-
-                # waypoint слияния — под центром ромба
-                merge_y = max(yes_r.perv_obj_xy[1] + 40, no_end_y + 40) + self.step_y
-                waypoint = Waypoint(self.page, if_cx - 1, merge_y)
-
-                Pointer(self.page, yes_r.prev_obj, waypoint)
-
-                if no_end_obj:
-                    Pointer(self.page, no_end_obj, waypoint)
-                else:
-                    Pointer(self.page, if_obj, waypoint, root="no")
-
-                self._place(waypoint)
-
-
-        return self.prev_obj
-
-test = drawpyo.File()
-
-test.file_path = "/workspaces/Fragmos/webapp/pages/fragmos"
-test.file_name = "Xuita.xml"
-
-
-# nodes = [
-#     {"type": "start", "value": "Начало"},
-#     {"type": "process", "value": "Процесс 1"},
-#     {"type": "process", "value": "Процесс 2"},
-#     {"type": "stop", "value": "Конец"}
-# ]
-
-nodes = [
-    {"type": "start", "value": "Начало"},
-    {"type": "process", "value": "i = 10"},
-    {
-        "type": "if",
-        "value": "i > 5",
-        "children": [
-            {"type": "process", "value": "output >> i"},
-            {"type": "process", "value": "i = i - 1"},
-        ],
-        "else_children": [
-            {"type": "process", "value": "output >> 'i <= 5'"},
-        ]
-    },
-    {"type": "process", "value": "Результат"},
-    {"type": "stop", "value": "Конец"}
-]
-
-page = drawpyo.Page(file=test)
+            self.step_y += 100
 
 
 
 
 
-renderer = Render(page, nodes, x=100, y=0)
-renderer.render()
 
-test.write()
+
+
+
+# obj_start = Base(page, "Начало", 140,20)
+
+# obj_if1 = If(page, "Если пенис большой", 100, 100)
+# obj1_if1_no = Proccess(page, "Выполнение", 10, 280)
+
+# obj_if2_if1_yes = If(page, "Если пенис очень большой", 240, 240) 
+# obj_if2_yes = Proccess(page, "Выполнение 3", 350, 360) 
+# obj_if2_no = Proccess(page, "Выполнение 4", 140, 360) 
+
+# obj_end = Base(page, "Конец", 140, 510)
+
+# pointer = Pointer(page, obj_start, obj_if1)
+
+# pointer1 = Pointer(page, obj_if1, obj1_if1_no, root="no")
+# pointer2 = Pointer(page, obj_if1, obj_if2_if1_yes, root="yes")
+# pointer3 = Pointer(page, obj_if2_if1_yes, obj_if2_yes, root="yes")
+# pointer4 = Pointer(page, obj_if2_if1_yes, obj_if2_no, root="no")
+
+
+# pointer5 = Pointer(page, obj1_if1_no, obj_end)
+# pointer6 = Pointer(page, obj_if2_yes, obj_end)
+# pointer7 = Pointer(page, obj_if2_no, obj_end)
+
+# obj_start = Base(page, "Начало", 450,20)
+# obj_end = Base(page, "Конец", 450, 450)
+
+
+# obj_while = While(page, "Пока ", 410, 110)
+# obj1_while = Proccess(page, "Выполнение 1", 450, 220)
+
+
+# anker = Waypoint(page, obj_while.position[0] + obj_while.width//2, obj_while.position[1] - 5)
+# pointer = Pointer(page,obj1_while, anker)
+
+# pointer  = Pointer(page, obj_start, obj_while)
+# pointer1 = Pointer(page, obj_while, obj1_while, root="yes")
+
+# pointer5 = Pointer(page, obj_while, obj_end, root="no")
