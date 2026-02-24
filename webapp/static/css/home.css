@@ -118,8 +118,6 @@
 .page-card:hover .page-card__arrow { color: var(--card-accent); transform: translateX(3px); }
 
 /* ── PLAN CARDS — через st.columns ─────────── */
-
-/* Обёртка колонки — добавляем бордер + спин */
 [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {
     background: #161b22;
     border: 1px solid #30363d;
@@ -136,7 +134,6 @@
     border-color: #484f58;
 }
 
-/* Контент внутри колонки */
 [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] > div {
     padding: 20px 16px 16px !important;
 }
@@ -187,7 +184,7 @@
     border-radius: 50%; flex-shrink: 0; opacity: 0.85;
 }
 
-/* Кнопка внутри плана — стилизуем нативную st.button */
+/* Кнопка внутри плана */
 [data-testid="stHorizontalBlock"] [data-testid="stButton"] > button {
     background: transparent !important;
     border: 1px solid #484f58 !important;
@@ -247,4 +244,187 @@
 [data-testid="stHorizontalBlock"] [data-testid="stButton"] > button:hover {
     border-color: transparent !important;
     color: #ffffff !important;
+}
+
+
+/* ════════════════════════════════════════════
+   TOKEN PURCHASE SECTION
+   ════════════════════════════════════════════ */
+
+.token-section {
+    margin-bottom: 12px;
+}
+
+.token-header {
+    margin-bottom: 16px;
+}
+
+.token-title-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+}
+
+.token-icon {
+    font-size: 18px;
+    line-height: 1;
+}
+
+.token-title {
+    font-size: 18px !important;
+    font-weight: 700 !important;
+    color: #e6edf3 !important;
+}
+
+.token-subtitle {
+    font-size: 13px !important;
+    color: #8b949e !important;
+    margin: 0 !important;
+}
+
+/* Слайдер Streamlit — стилизация */
+[data-testid="stSlider"] > div[data-testid="stSliderContainer"],
+[data-testid="stSelectSlider"] {
+    padding: 0 !important;
+}
+
+[data-testid="stSelectSlider"] [data-testid="stTickBarMin"],
+[data-testid="stSelectSlider"] [data-testid="stTickBarMax"] {
+    font-size: 10px !important;
+    color: #484f58 !important;
+}
+
+[data-testid="stSelectSlider"] [data-baseweb="slider"] [data-testid="stThumbValue"] {
+    font-size: 11px !important;
+    font-weight: 700 !important;
+    color: #ffa657 !important;
+}
+
+/* Track */
+[data-testid="stSelectSlider"] [role="slider"] {
+    background: #ffa657 !important;
+    border-color: #ffa657 !important;
+    box-shadow: 0 0 0 4px rgba(255, 166, 87, 0.18) !important;
+    width: 18px !important;
+    height: 18px !important;
+}
+
+/* Заполненная часть трека */
+[data-testid="stSelectSlider"] [data-baseweb="slider"] div[style*="background"] {
+    background: linear-gradient(90deg, #58a6ff, #ffa657) !important;
+}
+
+/* ── SUMMARY CARD ── */
+.token-summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 12px;
+    padding: 16px 20px;
+    margin: 14px 0 12px;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.token-summary:hover {
+    border-color: #ffa657;
+    box-shadow: 0 0 0 1px rgba(255, 166, 87, 0.12), 0 6px 20px rgba(0,0,0,0.4);
+}
+
+.token-summary-left {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.token-summary-amount {
+    font-size: 22px !important;
+    font-weight: 700 !important;
+    color: #ffa657 !important;
+    line-height: 1.1 !important;
+}
+
+.token-bonus {
+    font-size: 12px !important;
+    color: #3fb950 !important;
+    font-weight: 600 !important;
+}
+
+.token-summary-rate {
+    font-size: 11px !important;
+    color: #484f58 !important;
+    margin-top: 2px !important;
+}
+
+.token-summary-price {
+    font-size: 28px !important;
+    font-weight: 800 !important;
+    color: #e6edf3 !important;
+    letter-spacing: -0.02em !important;
+}
+
+/* ── BUY BUTTON ── */
+[data-testid="stButton"]:has(button[kind="secondary"]) > button,
+div[data-testid="element-container"]:has(button[kind]) button {
+    /* Overridden per-element below */
+}
+
+/* Кнопка "Купить токены" — ищем по ключу */
+button[data-testid="baseButton-secondary"] {
+    background: linear-gradient(135deg, #ffa657 0%, #ff7b72 100%) !important;
+    border: none !important;
+    border-radius: 8px !important;
+    color: #0d1117 !important;
+    font-weight: 800 !important;
+    font-size: 13px !important;
+    transition: opacity 0.2s, transform 0.15s, box-shadow 0.2s !important;
+    box-shadow: 0 4px 14px rgba(255,166,87,0.3) !important;
+}
+
+button[data-testid="baseButton-secondary"]:hover {
+    opacity: 0.9 !important;
+    transform: translateY(-1px) !important;
+    box-shadow: 0 6px 20px rgba(255,166,87,0.45) !important;
+}
+
+/* ── CHIP PACK ROW ── */
+.token-packs-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 10px;
+}
+
+.token-pack-chip {
+    font-size: 11px !important;
+    font-weight: 600 !important;
+    color: #8b949e !important;
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 20px;
+    padding: 4px 10px;
+    position: relative;
+    transition: border-color 0.15s, color 0.15s, background 0.15s;
+    cursor: default;
+    user-select: none;
+}
+
+.token-pack-chip--active {
+    border-color: #ffa657 !important;
+    color: #ffa657 !important;
+    background: rgba(255,166,87,0.08) !important;
+}
+
+.chip-bonus {
+    display: inline-block;
+    background: rgba(63, 185, 80, 0.18);
+    color: #3fb950 !important;
+    font-size: 9px !important;
+    font-weight: 800 !important;
+    border-radius: 10px;
+    padding: 1px 5px;
+    margin-left: 4px;
+    vertical-align: middle;
 }

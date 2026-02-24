@@ -19,7 +19,7 @@ def util_sidebar():
         st.write("Menu")
 
         # HOME 
-        if st.button("HOME", icon=":material/home:"):
+        if st.button("На главную", icon=":material/home:"):
             st.switch_page("home.py")
 
         # PAGE 1
