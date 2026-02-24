@@ -1,8 +1,11 @@
 import drawpyo
 import os
 
-if os.path.exists("/workspaces/Fragmos/webapp/pages/fragmos/Xuita.xml"):
-    os.remove("/workspaces/Fragmos/webapp/pages/fragmos/Xuita.xml")
+script_dir = os.path.dirname(os.path.abspath(__file__))
+
+file_path = os.path.join(script_dir, "Xuita.xml")
+if os.path.exists(file_path):
+    os.remove(file_path)
 
 class Base(drawpyo.diagram.Object):
     def __init__(self, page, value, x, y, center_x=None):
@@ -303,12 +306,12 @@ class Render():
 
 
 test = drawpyo.File()
-test.file_path = "/workspaces/Fragmos/webapp/pages/fragmos"
 test.file_name = "Xuita.xml"
+test.file_path = script_dir
 
 nodes = [
     {"type": "start", "value": "Начало"},
-    {"type": "process", "value": "i = 10"},
+    {"type": "process", "value": "x = 2"},
     {
         "type": "while",
         "value": "i != 0",
@@ -332,7 +335,6 @@ nodes = [
     },
     {"type": "stop", "value": "Конец"}
 ]
-
 page = drawpyo.Page(file=test)
 
 renderer = Render(page, nodes, x=100, y=0, center_x=200)
