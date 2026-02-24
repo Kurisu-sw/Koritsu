@@ -7,6 +7,7 @@ file_path = os.path.join(script_dir, "Xuita.xml")
 if os.path.exists(file_path):
     os.remove(file_path)
 
+
 class Base(drawpyo.diagram.Object):
     def __init__(self, page, value, x, y, center_x=None):
         super().__init__(page=page)
@@ -96,7 +97,6 @@ class Pointer(drawpyo.diagram.Edge):
         self.while_offset = while_offset
         self.pointer_type()
 
-
     def pointer_type(self):
         # возврат тела while к ромбу — идём слева
         if (self.source.position[1] > self.target.position[1]) and (type(self.target) == While):
@@ -106,25 +106,19 @@ class Pointer(drawpyo.diagram.Edge):
             return
         self.apply_style_string("endArrow=none;html=1;rounded=0;exitX=0.5;exitY=1;entryX=0.5;entryY=0;")
 
-        #ФИКС While добавил waypoint, вроде работает, но может быть костыльным решением, нужно будет тестить на разных вариантах циклов и условий
-        if type(self.target) == Waypoint and (type(self.source) == Proccess or type(self.source) == Execute) and self.source.position[1] > self.target.position[1]:
-            print(1111)
+        if type(self.target) == Waypoint and (type(self.source) == Proccess or type(self.source) == Execute) and self.source.position[1] > self.target.position[1] and type(self.source) != If:
             self.apply_style_string("endArrow=classic;html=1;rounded=0;exitX=0.5;exitY=1;entryX=0;entryY=0.5;")
             self.add_point_pos((self.source.position[0] - self.source.width // 2, self.source.position[1] + self.source.height + 10))
             self.add_point_pos((self.target.position[0] - self.target.width // 2, self.target.position[1]+2))
-            return
 
-        if type(self.target) == Waypoint and type(self.source) != While:
-            self.apply_style_string("endArrow=none;html=1;rounded=0;entryY=1;entryX=1;")
-            self.add_point_pos((self.target.position[0] + self.target.width // 2, self.target.position[1] - self.target.height ))
-            return
         if type(self.source) == If and self.root == "yes":
             self.apply_style_string("endArrow=none;html=1;rounded=0;exitX=1;exitY=0.5;entryX=0.5;entryY=0;")
             self.add_point_pos((self.target.position[0] + self.target.width // 2, self.source.position[1] + self.source.height // 2))
         if type(self.source) == If and self.root == "no":
             self.apply_style_string("endArrow=none;html=1;rounded=0;exitX=0;exitY=0.5;entryX=0.5;entryY=0;")
-            self.add_point_pos((self.target.position[0] + self.target.width // 2, self.source.position[1] + self.source.height // 2))
-    
+            self.add_point_pos((self.source.position[0] - 10, self.source.position[1] + self.source.height // 2))
+            self.add_point_pos((self.target.position[0] + self.target.width // 2, self.target.position[1] - self.target.height // 2))
+
         if type(self.source) == While and self.root == "yes":
             self.apply_style_string("endArrow=none;html=1;rounded=0;exitX=0.5;exitY=1;entryX=0.5;entryY=0;")
         if type(self.source) == While and self.root == "no":
@@ -152,21 +146,22 @@ class Text_format(drawpyo.diagram.Object):
         self.position = (x, y)
         self.apply_style_string("text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;rounded=0;")
 
+
 def calc_width(nodes):
     """Рекурсивно считает ширину всего поддерева."""
     if not nodes:
-        return 120  # минимальная ширина блока
-    
+        return 120
     own_width = 120
     for node in nodes:
         if node["type"] == "if":
             yes_w = calc_width(node["children"])
             no_w  = calc_width(node.get("else_children", []))
-            own_width = max(own_width, yes_w + no_w + 160)  # 160 — отступы между ветками
+            own_width = max(own_width, yes_w + no_w + 160)
         elif node["type"] == "while":
             body_w = calc_width(node["children"])
             own_width = max(own_width, body_w)
     return own_width
+
 
 def calc_while_depth(nodes):
     """Считает максимальную глубину вложенности while в дереве."""
@@ -174,12 +169,16 @@ def calc_while_depth(nodes):
     for node in nodes:
         if node["type"] == "while":
             inner = calc_while_depth(node["children"])
+            # берём максимум, не суммируем
             max_depth = max(max_depth, inner + 1)
         elif node["type"] == "if":
             yes_depth = calc_while_depth(node["children"])
             no_depth  = calc_while_depth(node.get("else_children", []))
+            # берём максимум из веток, не суммируем
             max_depth = max(max_depth, yes_depth, no_depth)
     return max_depth
+
+
 class Render():
     def __init__(self, page, nodes, x=0, y=0, prev_obj=None, entry_root=None, center_x=None, while_offset=None):
         self.page = page
@@ -190,11 +189,13 @@ class Render():
         self.first_obj = None
         self.entry_root = entry_root
         self.center_x = center_x if center_x is not None else x + 60
+
         if while_offset is None:
             depth = calc_while_depth(nodes)
-            self.while_offset = depth * 40
+            self.while_offset = depth * 80
         else:
             self.while_offset = while_offset
+        print(f"While offset: {self.while_offset}")
 
     def _place(self, obj):
         if self.first_obj is None:
@@ -248,13 +249,19 @@ class Render():
                 yes_tree_w = calc_width(node["children"])
                 no_tree_w  = calc_width(node.get("else_children", []))
 
+                # Пересчитываем while_offset локально для каждой ветки
+                yes_depth = calc_while_depth(node["children"])
+                no_depth  = calc_while_depth(node.get("else_children", []))
+
                 yes_center_x = if_cx + yes_tree_w // 2 + 50
-                yes_r = Render(self.page, node["children"], x=0, y=if_cy, prev_obj=if_obj, entry_root="yes", center_x=yes_center_x, while_offset=self.while_offset)
+                yes_r = Render(self.page, node["children"], x=0, y=if_cy, prev_obj=if_obj, entry_root="yes",
+                               center_x=yes_center_x, while_offset=yes_depth * 40)
                 yes_r.render()
 
                 if node.get("else_children"):
                     no_center_x = if_cx - no_tree_w // 2 - 50
-                    no_r = Render(self.page, node["else_children"], x=0, y=if_cy, prev_obj=if_obj, entry_root="no", center_x=no_center_x, while_offset=self.while_offset)
+                    no_r = Render(self.page, node["else_children"], x=0, y=if_cy, prev_obj=if_obj, entry_root="no",
+                                  center_x=no_center_x, while_offset=no_depth * 40)
                     no_r.render()
                     no_end_obj = no_r.prev_obj
                     no_end_y   = no_r.perv_obj_xy[1]
@@ -290,13 +297,18 @@ class Render():
                 Text_format(self.page, "Да", while_obj.position[0] + while_obj.width // 2 + 5, while_obj.position[1] + while_obj.height + 5)
                 Text_format(self.page, "Нет", no_offset + 5, while_obj.position[1] + while_obj.height // 2 - 10)
 
-                body_r = Render(self.page, node["children"], x=0, y=while_obj.position[1] + while_obj.height, prev_obj=while_obj, entry_root="yes", center_x=while_cx, while_offset=self.while_offset - 40)
+                # Пересчитываем while_offset локально для тела цикла
+                body_depth = calc_while_depth(node["children"])
+                body_r = Render(self.page, node["children"], x=0, y=while_obj.position[1] + while_obj.height,
+                                prev_obj=while_obj, entry_root="yes", center_x=while_cx,
+                                while_offset=body_depth * 20)
                 body_r.render()
-                while_waypoint = Waypoint(self.page, while_cx, while_obj.position[1]-10)
-                Pointer(self.page, body_r.prev_obj, while_waypoint, while_offset=0 )
+
+                while_waypoint = Waypoint(self.page, while_cx, while_obj.position[1] - 10)
+                Pointer(self.page, body_r.prev_obj, while_waypoint, while_offset=0)
 
                 exit_y  = max(body_r.perv_obj_xy[1] + 40, while_obj.position[1] + while_obj.height + 40) + self.step_y
-                exit_wp = Waypoint(self.page, (self.first_obj.position[0] + self.first_obj.width // 2)+2, exit_y)
+                exit_wp = Waypoint(self.page, (self.first_obj.position[0] + self.first_obj.width // 2) + 2, exit_y)
 
                 Pointer(self.page, while_obj, exit_wp, root="no", while_offset=self.while_offset)
 
@@ -311,23 +323,51 @@ test.file_path = script_dir
 
 nodes = [
     {"type": "start", "value": "Начало"},
-    {"type": "process", "value": "x = 2"},
+    {"type": "process", "value": "i = 3"},
     {
         "type": "while",
-        "value": "i != 0",
+        "value": "i > 0",
         "children": [
+
+            # IF В ПЕРВОМ WHILE
             {
                 "type": "if",
-                "value": "i > 5",
+                "value": "i % 2 == 0",
                 "children": [
+                    {"type": "process", "value": "output >> even i"}
+                ],
+                "else_children": [
+                    {"type": "process", "value": "output >> odd i"}
+                ]
+            },
+
+            {"type": "process", "value": "j = 2"},
+            {
+                "type": "while",
+                "value": "j > 0",
+                "children": [
+                    {"type": "process", "value": "k = 2"},
                     {
                         "type": "while",
-                        "value": "j != 0",
+                        "value": "k > 0",
                         "children": [
-                            {"type": "process", "value": "output >> j"},
-                            {"type": "process", "value": "j = j - 1"},
+
+                            # IF В ТРЕТЬЕМ WHILE
+                            {
+                                "type": "if",
+                                "value": "k % 2 == 0",
+                                "children": [
+                                    {"type": "process", "value": "output >> even k"}
+                                ],
+                                "else_children": [
+                                    {"type": "process", "value": "output >> odd k"}
+                                ]
+                            },
+
+                            {"type": "process", "value": "k = k - 1"},
                         ]
                     },
+                    {"type": "process", "value": "j = j - 1"},
                 ]
             },
             {"type": "process", "value": "i = i - 1"},
@@ -335,11 +375,10 @@ nodes = [
     },
     {"type": "stop", "value": "Конец"}
 ]
+
 page = drawpyo.Page(file=test)
 
 renderer = Render(page, nodes, x=100, y=0, center_x=200)
 renderer.render()
 
 test.write()
-
-# TODO: хутеа с waypoint он не ставит его нормально в плане что чуть левее чем следующий блок  и почему-то на выходе из while какакет новым waypoint
