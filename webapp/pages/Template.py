@@ -12,12 +12,9 @@ class Template:
         self.file = file
         self.name = file.name if hasattr(file, 'name') else 'output.docx'
         self.data_to_tags = {}
-    
+        self.optional_tags = {}
+
     def found_all_tags(self, document):
-        """
-        Возвращает список кортежей (tag_name, comment) В ПОРЯДКЕ ПОЯВЛЕНИЯ в документе.
-        Поддерживает формат {{tag_name:Комментарий}} и {{tag_name}}.
-        """
         tags_ordered = []
         seen = set()
 
@@ -26,15 +23,18 @@ class Template:
 
         doc = Document(document)
 
-        tag_pattern = re.compile(r'\{\{([^}:]+?)(?::([^}]*))?\}\}')
+        tag_pattern = re.compile(r'\{\{([^}:|]+?)(?::([^}|]*))?(?:\|([^}]*))?\}\}')
 
         def extract(text):
             for match in tag_pattern.finditer(text):
                 tag_name = match.group(1).strip()
                 comment = match.group(2).strip() if match.group(2) else None
+                flags = match.group(3).strip().lower() if match.group(3) else ''
+                is_optional = 'optional' in flags.split(',')
+
                 if tag_name not in seen:
                     seen.add(tag_name)
-                    tags_ordered.append((tag_name, comment))
+                    tags_ordered.append((tag_name, comment, is_optional))
 
         for para in doc.paragraphs:
             extract(para.text)
@@ -49,22 +49,39 @@ class Template:
 
         return tags_ordered
 
+    def _prepare_value_for_docx(self, value: str) -> str:
+        if not value:
+            return ''
+        return value.replace('\t', '    ')
+
+    def _escape_jinja(self, value: str) -> str:
+        if not value:
+            return ''
+        value = value.replace('{%', '{ %')
+        value = value.replace('%}', '% }')
+        value = value.replace('{{', '{ {')
+        value = value.replace('}}', '} }')
+        return value
+
     def get_tags_data(self, tags):
-        """
-        tags — список кортежей (tag_name, comment) в порядке появления
-        """
         self.data_to_tags = {}
+        self.optional_tags = {}
         st.markdown("### Заполните значения для тегов:")
 
         with st.form(key="tags_form"):
-            for tag_name, comment in tags:
+            for tag_name, comment, is_optional in tags:
                 label = comment if comment else tag_name
-                self.data_to_tags[tag_name] = st.text_area(
-                    f"**{label}**",
+                suffix = " (необязательно)" if is_optional else ""
+
+                value = st.text_area(
+                    f"**{label}**{suffix}",
                     key=f"input_{tag_name}",
                     placeholder=f"Введите значение для {label}",
                     height=120,
                 )
+
+                self.optional_tags[tag_name] = is_optional
+                self.data_to_tags[tag_name] = self._prepare_value_for_docx(value) if value else ''
 
             submitted = st.form_submit_button(
                 "Сгенерировать документ",
@@ -73,15 +90,15 @@ class Template:
             )
 
         if submitted:
-            empty_fields = [
+            empty_required = [
                 (comment if comment else tag_name)
-                for tag_name, comment in tags
-                if not self.data_to_tags.get(tag_name, "").strip()
+                for tag_name, comment, is_optional in tags
+                if not is_optional and not self.data_to_tags.get(tag_name, "").strip()
             ]
 
-            if empty_fields:
+            if empty_required:
                 st.warning(
-                    f"Пожалуйста, заполните все поля. Пустые поля: {', '.join(empty_fields)}",
+                    f"Пожалуйста, заполните обязательные поля. Пустые: {', '.join(empty_required)}",
                     icon=":material/warning:"
                 )
             else:
@@ -92,7 +109,15 @@ class Template:
             self.file.seek(0)
 
             doc = DocxTemplate(self.file)
-            doc.render(self.data_to_tags)
+
+            render_data = {}
+            for tag_name, value in self.data_to_tags.items():
+                if self.optional_tags.get(tag_name) and not value.strip():
+                    render_data[tag_name] = ''
+                else:
+                    render_data[tag_name] = self._escape_jinja(value)
+
+            doc.render(render_data)
 
             output = BytesIO()
             doc.save(output)
@@ -194,8 +219,10 @@ class Template:
 
             with st.expander(f"Найдено тегов: {len(tags)}", expanded=False):
                 st.write(", ".join([
-                    f"`{tag_name}`" + (f" ({comment})" if comment else "")
-                    for tag_name, comment in tags
+                    f"`{tag_name}`" +
+                    (f" ({comment})" if comment else "") +
+                    (" *опционально*" if is_optional else "")
+                    for tag_name, comment, is_optional in tags
                 ]))
 
             self.get_tags_data(tags)
@@ -203,7 +230,10 @@ class Template:
         except ValueError:
             st.warning(
                 "В шаблоне не найдено тегов для замены. "
-                "Пожалуйста, используйте теги в формате **{{tag_name}}** или **{{tag_name:Комментарий}}**",
+                "Пожалуйста, используйте теги в формате:\n"
+                "- `{{tag_name}}`\n"
+                "- `{{tag_name:Комментарий}}`\n"
+                "- `{{tag_name:Комментарий|optional}}` ← опциональное поле",
                 icon=":material/warning:"
             )
         except Exception as e:
@@ -245,8 +275,12 @@ templates = Template(None)
 
 if selection == 0:
     st.info(
-        "Загрузите или выберете шаблон в формате .docx, содержащий теги в формате **{{tag_name}}** или **{{tag_name:Комментарий}}**. "
-        "После загрузки вы сможете ввести значения для каждого тега и сгенерировать заполненный документ.",
+        "Загрузите или выберете шаблон в формате .docx, содержащий теги.\n\n"
+        "**Поддерживаемые форматы тегов:**\n"
+        "- `{{tag_name}}` — базовый тег\n"
+        "- `{{tag_name:Комментарий}}` — тег с подсказкой\n"
+        "- `{{tag_name:Комментарий|optional}}` — **опциональный** тег (можно оставить пустым)\n\n"
+        "> 💡 **Совет:** Табуляция и переносы строк в введённом тексте сохраняются автоматически.",
         icon=":material/info:"
     )
     templates.show_templates()
