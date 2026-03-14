@@ -1,9 +1,9 @@
 colorama
-streamlit
-graphviz 
-docxtpl 
-streamlit-material
-docx 
+docxtpl
+docx
 docxtpl
 drawpyo
 openai
+reflex
+fastapi
+dotenv

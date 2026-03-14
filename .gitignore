@@ -35,8 +35,10 @@ ENV/
 Thumbs.db
 desktop.ini
 
-# Streamlit
-.streamlit/secrets.toml
+# Reflex
+.web/
+.reflex
+
 
 # Generated files
 *.xml
