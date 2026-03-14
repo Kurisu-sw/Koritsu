@@ -156,6 +156,11 @@ class AuthState(rx.State):
         self.sub_expire_date = ""
         self.tokens_left = 0
 
+    async def do_refresh_user(self):
+        """Обновляет данные текущего пользователя"""
+        if self.user_uuid:
+            await self._load_user_data()
+
     # ── Register ───────────────────────────────────────────────────────────────
 
     async def do_register(self):

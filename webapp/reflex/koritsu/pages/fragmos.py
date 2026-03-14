@@ -1,5 +1,6 @@
 import reflex as rx
 from koritsu.state.fragmos_state import FragmosState
+from koritsu.state.auth_state import AuthState
 
 # ── Palette ───────────────────────────────────────────────────────────────────
 BG          = "linear-gradient(135deg, #08080f 0%, #0b0f1a 50%, #07101e 100%)"
@@ -30,6 +31,193 @@ SCROLLBAR_CSS = {
     "&::-webkit-scrollbar-track": {"background": "transparent"},
     "&::-webkit-scrollbar-thumb": {"background": BORDER, "border_radius": "2px"},
 }
+
+# ── Nav bar (from home page) ────────────────────────────────────────────────
+
+PANEL_H       = "rgba(255,255,255,0.05)"
+HOVER_H       = "rgba(255,255,255,0.09)"
+ACCENT2_H     = "rgba(59,130,246,0.18)"
+ACCENT_GLOW_H = "rgba(59,130,246,0.30)"
+
+def _nav_link(label: str, href: str) -> rx.Component:
+    return rx.link(
+        rx.box(
+            rx.text(label, color=TEXT, font_size="13px",
+                    font_family=SANS, font_weight="500"),
+            background=PANEL_H,
+            border=f"1px solid {BORDER}",
+            padding="7px 18px",
+            border_radius="10px",
+            cursor="pointer",
+            transition="all 0.2s",
+            _hover={
+                "background": HOVER_H,
+                "border_color": "rgba(255,255,255,0.20)",
+            },
+        ),
+        href=href,
+        text_decoration="none",
+    )
+
+
+def _auth_nav_buttons() -> rx.Component:
+    """Login/Register buttons shown when not logged in."""
+    return rx.hstack(
+        rx.el.button(
+            "Войти",
+            color=TEXT,
+            font_size="13px",
+            font_family=SANS,
+            font_weight="500",
+            background=PANEL_H,
+            border=f"1px solid {BORDER}",
+            padding="7px 18px",
+            border_radius="10px",
+            cursor="pointer",
+            transition="all 0.2s",
+            on_click=AuthState.open_login,
+        ),
+        rx.el.button(
+            "Регистрация",
+            color="white",
+            font_size="13px",
+            font_family=SANS,
+            font_weight="600",
+            background=f"linear-gradient(135deg,{ACCENT},#2563eb)",
+            border="none",
+            padding="7px 18px",
+            border_radius="10px",
+            box_shadow=f"0 2px 12px {ACCENT_GLOW_H}",
+            cursor="pointer",
+            transition="all 0.2s",
+            on_click=AuthState.open_register,
+        ),
+        spacing="2",
+    )
+
+
+def _user_avatar() -> rx.Component:
+    """Circular avatar with user initial."""
+    return rx.box(
+        rx.text(
+            AuthState.user_initial,
+            color="white",
+            font_size="13px",
+            font_weight="700",
+            font_family=SANS,
+        ),
+        width="34px",
+        height="34px",
+        min_width="34px",
+        background=f"linear-gradient(135deg,{ACCENT},#2563eb)",
+        border_radius="50%",
+        display="flex",
+        align_items="center",
+        justify_content="center",
+        border="2px solid rgba(255,255,255,0.15)",
+    )
+
+
+def _user_menu() -> rx.Component:
+    """User avatar + dropdown shown when logged in."""
+    return rx.menu.root(
+        rx.menu.trigger(
+            rx.hstack(
+                _user_avatar(),
+                rx.text(
+                    AuthState.username,
+                    color=TEXT,
+                    font_size="13px",
+                    font_family=SANS,
+                    font_weight="500",
+                    display=["none", "none", "block"],
+                ),
+                spacing="2",
+                align="center",
+                cursor="pointer",
+                padding="4px 8px",
+                border_radius="12px",
+                transition="all 0.15s",
+                _hover={"background": PANEL_HVR},
+            ),
+        ),
+        rx.menu.content(
+            rx.menu.item(
+                rx.hstack(
+                    rx.icon("crown", size=14, color="#fbbf24"),
+                    rx.text("Подписка", font_family=SANS, font_size="13px"),
+                    spacing="2", align="center",
+                ),
+            ),
+            rx.menu.item(
+                rx.hstack(
+                    rx.icon("settings", size=14, color=MUTED),
+                    rx.text("Настройки", font_family=SANS, font_size="13px"),
+                    spacing="2", align="center",
+                ),
+            ),
+            rx.menu.separator(),
+            rx.menu.item(
+                rx.hstack(
+                    rx.icon("log-out", size=14, color=DANGER),
+                    rx.text("Выйти", font_family=SANS, font_size="13px", color=DANGER),
+                    spacing="2", align="center",
+                ),
+                on_click=AuthState.do_logout,
+            ),
+            background="rgba(15,15,25,0.95)",
+            border=f"1px solid {BORDER}",
+            backdrop_filter="blur(20px) saturate(180%)",
+            border_radius="14px",
+            padding="6px",
+            box_shadow="0 16px 48px rgba(0,0,0,0.5)",
+        ),
+    )
+
+
+def _nav() -> rx.Component:
+    return rx.box(
+        rx.hstack(
+            # Logo
+            rx.link(
+                rx.hstack(
+                    rx.box(
+                        rx.text("K", color=ACCENT, font_size="18px", font_weight="700",
+                                font_family=SANS),
+                        width="32px", height="32px",
+                        background=f"linear-gradient(135deg,{ACCENT2_H},{ACCENT_GLOW_H})",
+                        border=f"1px solid {ACCENT}",
+                        border_radius="10px",
+                        display="flex", align_items="center", justify_content="center",
+                    ),
+                    rx.text("Koritsu", color=TEXT, font_size="17px", font_weight="600",
+                            font_family=SANS, letter_spacing="-0.3px"),
+                    spacing="2", align="center",
+                ),
+                href="/",
+                text_decoration="none",
+            ),
+            rx.spacer(),
+            # Right side: auth buttons or user menu
+            rx.cond(
+                AuthState.is_logged_in,
+                _user_menu(),
+                _auth_nav_buttons(),
+            ),
+            align="center",
+            width="100%",
+        ),
+        position="fixed",
+        top="0", left="0", right="0",
+        z_index="100",
+        background="rgba(8,8,15,0.75)",
+        backdrop_filter="blur(20px) saturate(180%)",
+        border_bottom=f"1px solid {BORDER}",
+        padding_x="32px",
+        height="56px",
+        display="flex",
+        align_items="center",
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -124,6 +312,48 @@ def _chat_item(chat: dict) -> rx.Component:
     )
 
 
+def auth_required() -> rx.Component:
+    """Экран с сообщением о необходимости авторизации"""
+    return rx.box(
+        # Hero icon
+        rx.box(
+            rx.icon("log-in", size=46, color="white"),
+            width="92px", height="92px",
+            background=f"linear-gradient(135deg,{ACCENT},{ACCENT2})",
+            border_radius="26px",
+            display="flex", align_items="center", justify_content="center",
+            box_shadow=f"0 20px 60px {ACCENT_GLOW},0 8px 28px rgba(59,130,246,0.22)",
+            margin_bottom="22px",
+        ),
+        rx.text("Требуется авторизация",
+                font_size="30px", font_weight="700", color=TEXT,
+                letter_spacing="-0.5px", margin_bottom="10px"),
+        rx.text(
+            "Войдите в систему, чтобы получить доступ к генератору блок-схем",
+            font_size="15px", color=MUTED, text_align="center",
+            line_height="1.6", margin_bottom="36px",
+        ),
+        # Login button
+        rx.button(
+            rx.icon("log-in", size=17, color="white"),
+            rx.text("Войти", font_size="15px", font_weight="600", color="white"),
+            display="flex", align_items="center", justify_content="center", gap="9px",
+            width="100%", max_width="280px", padding="14px 20px",
+            background=ACCENT, border_radius="14px", border="none",
+            cursor="pointer",
+            box_shadow="0 4px 18px rgba(59,130,246,0.32)",
+            transition="all 0.15s",
+            _hover={"background": ACCENT_HVR},
+            _active={"transform": "scale(0.98)"},
+            on_click=AuthState.open_login,
+        ),
+        display="flex", flex_direction="column", align_items="center",
+        justify_content="center",
+        flex="1", width="100%", height="100vh",
+        background=BG,
+    )
+
+
 def sidebar() -> rx.Component:
     return rx.box(
         # ── Top bar ───────────────────────────────────────────────────────────
@@ -178,11 +408,13 @@ def sidebar() -> rx.Component:
             flex="1", overflow_y="auto", css=SCROLLBAR_CSS,
         ),
         # Panel shell
-        width="244px", flex_shrink="0", height="100vh",
+        width="244px", flex_shrink="0",
+        height="calc(100vh - 56px)",
+        margin_top="56px",
         display="flex", flex_direction="column",
         background=HEADER_BG, backdrop_filter="blur(20px)",
         border_right=f"1px solid {BORDER}",
-        position="sticky", top="0",
+        position="sticky", top="56px",
     )
 
 
@@ -474,6 +706,7 @@ def empty_state() -> rx.Component:
         ),
         flex="1", display="flex", flex_direction="column",
         height="100vh", overflow="hidden",
+        padding_top="56px",
     )
 
 
@@ -577,6 +810,18 @@ def diagram_viewer() -> rx.Component:
             rx.text("БЛОК-СХЕМА", font_size="10px", font_weight="700",
                     color=MUTED, letter_spacing="0.1em"),
             rx.box(flex="1"),
+            # Баланс пользователя
+            rx.box(
+                rx.icon("coins", size=11, color=ACCENT),
+                rx.text(f"Баланс: {AuthState.tokens_left} токенов", font_size="11px",
+                        font_weight="600", color=ACCENT),
+                display="flex", align_items="center", gap="4px",
+                padding="3px 9px",
+                background="rgba(59,130,246,0.10)",
+                border=f"1px solid rgba(59,130,246,0.22)",
+                border_radius="8px",
+            ),
+            # Потраченные токены за генерацию
             rx.cond(
                 FragmosState.tokens_label != "",
                 rx.box(
@@ -588,6 +833,7 @@ def diagram_viewer() -> rx.Component:
                     background="rgba(52,211,153,0.10)",
                     border=f"1px solid rgba(52,211,153,0.22)",
                     border_radius="8px",
+                    margin_left="6px",
                 ),
                 rx.box(),
             ),
@@ -612,6 +858,7 @@ def diagram_viewer() -> rx.Component:
         ),
         flex="1", display="flex", flex_direction="column",
         height="100vh", overflow="hidden",
+        padding_top="56px",
     )
 
 
@@ -1152,13 +1399,24 @@ def fragmos_page() -> rx.Component:
             "}"
             "</style>"
         ),
-        sidebar(),
-        rx.cond(FragmosState.has_selected, diagram_viewer(), empty_state()),
-        # Modals (portals)
-        code_modal(),
-        bug_modal(),
-        settings_modal(),
-        delete_confirm(),
+        # Global nav bar
+        _nav(),
+        rx.cond(
+            FragmosState.is_authenticated,
+            rx.box(
+                sidebar(),
+                rx.cond(FragmosState.has_selected, diagram_viewer(), empty_state()),
+                # Modals (portals)
+                code_modal(),
+                bug_modal(),
+                settings_modal(),
+                delete_confirm(),
+                display="flex",
+                flex="1",
+                min_height="100vh",
+            ),
+            auth_required(),
+        ),
         display="flex",
         min_height="100vh",
         min_width="1024px",

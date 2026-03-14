@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(cat /c/Users/user/Documents/GitHub/Koritsu/webapp/reflex/koritsu/state/*.py)",
-      "Bash(python -c \"from koritsu.state.fragmos_state import FragmosState; print\\(''state OK''\\)\")",
-      "Bash(py -c \":*)"
-    ]
-  }
-}

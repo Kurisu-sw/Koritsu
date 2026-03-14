@@ -19,8 +19,8 @@ FILES_URL       = "https://ai.api.cloud.yandex.net/v1/files"
 
 TOKEN_MULTIPLIER = 2
 
-API_KEY    = "123-"
-PROJECT_ID = "123"
+API_KEY    = ""
+PROJECT_ID = ""
 
 
 # ─────────────────────────────────────────
@@ -111,8 +111,11 @@ class AI_API:
         return getattr(usage, "total_tokens", 0)
 
     def charged_tokens(self, yandex_tokens: int) -> int:
-        """Токены к списанию: в TOKEN_MULTIPLIER раз больше чем у Yandex."""
-        return int (yandex_tokens //100 / 10) * TOKEN_MULTIPLIER
+        """
+        Токены к списанию: 1 токен пользователя = 100 токенов Yandex × множитель.
+        Минимум 1 токен за запрос.
+        """
+        return max(1, (yandex_tokens // 100) * TOKEN_MULTIPLIER)
 
 
     # ─────────────────────────────────────────

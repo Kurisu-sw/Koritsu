@@ -90,9 +90,10 @@ def run_with_token_check(
     if token_budget is not None:
         print(f"[{step}/3] Оценка токенов...")
         estimated  = api.estimate_tokens_from_text(code)
-        required   = estimated * TOKEN_MULTIPLIER + TOKEN_BUFFER
+        # Формула должна соответствовать charged_tokens() в request.py
+        required   = (estimated // 100) * TOKEN_MULTIPLIER + TOKEN_BUFFER
         print(f"      Оценка: ~{estimated} яндекс-токенов "
-              f"→ ~{estimated * TOKEN_MULTIPLIER} к списанию")
+              f"→ ~{(estimated // 100) * TOKEN_MULTIPLIER} к списанию")
         print(f"      Баланс: {token_budget} | Требуется: {required}")
         if token_budget < required:
             raise InsufficientTokensError(

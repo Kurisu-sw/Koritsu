@@ -16,5 +16,5 @@ app = rx.App(
 )
 
 app.add_page(home_page,    route="/")
-app.add_page(fragmos_page, route="/fragmos", on_load=FragmosState.on_load)
+app.add_page(fragmos_page, route="/fragmos", on_load=[AuthState.do_refresh_user, FragmosState.on_load])
 app.add_page(engrafo_page, route="/engrafo")

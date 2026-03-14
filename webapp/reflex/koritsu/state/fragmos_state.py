@@ -7,11 +7,10 @@ import sys
 import tempfile
 import uuid
 import reflex as rx
-from auth_state import AuthState 
+
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 _STATE_DIR   = os.path.dirname(os.path.abspath(__file__))
-SCHEMES_DIR  = os.path.dirname(os.path.join(_STATE_DIR, f"../../server/files/users/{}"))
 BUG_DIR      = os.path.normpath(os.path.join(_STATE_DIR, "../../../db/bug_reports"))
 _FRAGMOS_DIR = os.path.normpath(os.path.join(_STATE_DIR, "../../../../modules/fragmos"))
 
@@ -127,7 +126,7 @@ class FragmosState(rx.State):
     last_tokens: int = 0   # charged tokens за последнюю генерацию
 
     # ── Token balance ─────────────────────────────────────────────────────────
-    user_tokens: int = 10000   # баланс токенов пользователя
+    user_tokens: int = 0   # баланс токенов пользователя (синхронизируется с AuthState)
 
     # ── File upload ───────────────────────────────────────────────────────────
     is_uploading: bool = False
@@ -169,6 +168,11 @@ class FragmosState(rx.State):
         return self.selected_chat_id != ""
 
     @rx.var
+    def is_authenticated(self) -> bool:
+        """Проверяет, авторизован ли пользователь"""
+        return self.user_uuid != ""
+
+    @rx.var
     def can_submit(self) -> bool:
         return len(self.code_input.strip()) > 0
 
@@ -201,20 +205,27 @@ class FragmosState(rx.State):
     # Internal helpers
     # ─────────────────────────────────────────────────────────────────────────
 
+    def _get_schemes_dir(self) -> str:
+        """Возвращает путь к папке схем для текущего пользователя"""
+        if not self.user_uuid:
+            return os.path.normpath(os.path.join(_STATE_DIR, "../../../../server/files/users/default/fragmos"))
+        return os.path.normpath(os.path.join(_STATE_DIR, f"../../../../server/files/users/{self.user_uuid}/fragmos"))
+
     def _reload_schemes(self):
         """Перезагружает список схем из локальной папки"""
-        os.makedirs(SCHEMES_DIR, exist_ok=True)
+        schemes_dir = self._get_schemes_dir()
+        os.makedirs(schemes_dir, exist_ok=True)
         result: list[dict] = []
         try:
-            files = [f for f in os.listdir(SCHEMES_DIR) if f.endswith(".xml")]
+            files = [f for f in os.listdir(schemes_dir) if f.endswith(".xml")]
         except OSError:
             files = []
         files.sort(
-            key=lambda f: os.path.getmtime(os.path.join(SCHEMES_DIR, f)),
+            key=lambda f: os.path.getmtime(os.path.join(schemes_dir, f)),
             reverse=True,
         )
         for fname in files:
-            fpath = os.path.join(SCHEMES_DIR, fname)
+            fpath = os.path.join(schemes_dir, fname)
             name  = os.path.splitext(fname)[0]
             mtime = os.path.getmtime(fpath)
             ts    = datetime.datetime.fromtimestamp(mtime).strftime("%d %b, %H:%M")
@@ -250,8 +261,55 @@ class FragmosState(rx.State):
     # Page lifecycle
     # ─────────────────────────────────────────────────────────────────────────
 
-    def on_load(self):
+    async def on_load(self):
+        """Загружает данные пользователя и список схем"""
+        await self.sync_user_uuid()
         self._reload_schemes()
+
+    async def sync_user_uuid(self):
+        """Синхронизирует UUID и токены пользователя из AuthState"""
+        from koritsu.state.auth_state import AuthState
+        # Получаем состояние AuthState
+        auth_state = await self.get_state(AuthState)
+        if auth_state.user_uuid:
+            self.user_uuid = auth_state.user_uuid
+            self.user_tokens = auth_state.tokens_left
+
+    async def _deduct_tokens(self, amount: int) -> tuple[bool, str]:
+        """
+        Списывает токены через API.
+        Возвращает (success, error_message).
+        """
+        from koritsu.state.auth_state import AuthState
+        import httpx
+
+        if not self.user_uuid:
+            return False, "User not authenticated"
+
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.patch(
+                    f"{API_URL}/user/{self.user_uuid}",
+                    json={
+                        "item": "tokens_left",
+                        "olditem": "minus",
+                        "newitem": str(amount),
+                    },
+                    timeout=10,
+                )
+                data = resp.json()
+        except Exception as exc:
+            return False, f"API error: {exc}"
+
+        if "error" in data:
+            return False, data["error"]
+
+        # Обновляем локальный баланс и баланс в AuthState
+        self.user_tokens = int(data.get("success", "").split(": ")[1] if ": " in data.get("success", "") else self.user_tokens - amount)
+        auth_state = await self.get_state(AuthState)
+        auth_state.tokens_left = self.user_tokens
+
+        return True, ""
 
     def set_user_uuid(self, uuid: str):
         """Устанавливает UUID пользователя"""
@@ -271,10 +329,21 @@ class FragmosState(rx.State):
         if not self.code_input.strip():
             return
 
-        os.makedirs(SCHEMES_DIR, exist_ok=True)
+        # Проверка авторизации
+        if not self.user_uuid:
+            self.generation_error = "Требуется авторизация"
+            return
+
+        # Проверка баланса перед генерацией (минимальный резерв)
+        if self.user_tokens < 100:
+            self.generation_error = f"Недостаточно токенов. Баланс: {self.user_tokens}"
+            return
+
+        schemes_dir = self._get_schemes_dir()
+        os.makedirs(schemes_dir, exist_ok=True)
         slug = str(uuid.uuid4())[:8]
         fname = f"Схема_{slug}.xml"
-        xml_path = os.path.join(SCHEMES_DIR, fname)
+        xml_path = os.path.join(schemes_dir, fname)
 
         saved_code = self.code_input
         self.code_input = ""
@@ -284,6 +353,8 @@ class FragmosState(rx.State):
         yield
 
         success = False
+        tokens = 0
+        ai_json = ""
         try:
             _result, tokens, ai_json = await asyncio.to_thread(
                 _run_pipeline,
@@ -293,10 +364,29 @@ class FragmosState(rx.State):
                 MODELS.get(self.selected_model),
                 self.user_tokens,
             )
-            self.last_tokens = tokens
-            self.last_ai_response = ai_json
-            self.user_tokens = max(0, self.user_tokens - tokens)
-            success = True
+            
+            # Проверка: достаточно ли токенов для списания
+            if tokens > self.user_tokens:
+                self.generation_error = f"Недостаточно токенов. Требуется: {tokens}, ваш баланс: {self.user_tokens}"
+                try:
+                    if os.path.exists(xml_path):
+                        os.remove(xml_path)
+                except OSError:
+                    pass
+            else:
+                # Списываем токены через API
+                deduct_success, deduct_error = await self._deduct_tokens(tokens)
+                if not deduct_success:
+                    self.generation_error = f"Ошибка списания токенов: {deduct_error}"
+                    try:
+                        if os.path.exists(xml_path):
+                            os.remove(xml_path)
+                    except OSError:
+                        pass
+                else:
+                    self.last_tokens = tokens
+                    self.last_ai_response = ai_json
+                    success = True
         except Exception as exc:
             self.generation_error = str(exc)
             self.last_tokens = 0
@@ -409,9 +499,10 @@ class FragmosState(rx.State):
 
     def on_confirm_delete(self):
         cid = self.delete_confirm_id
+        schemes_dir = self._get_schemes_dir()
         for c in self.chats:
             if c["id"] == cid:
-                fpath = os.path.join(SCHEMES_DIR, c["filename"])
+                fpath = os.path.join(schemes_dir, c["filename"])
                 try:
                     os.remove(fpath)
                 except OSError:
