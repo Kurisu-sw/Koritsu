@@ -18,6 +18,8 @@ class AuthState(rx.State):
     # ── Modal ──────────────────────────────────────────────────────────────────
     show_auth_modal: bool = False
     auth_tab: str = "login"
+    show_avatar_upload: bool = False
+    avatar_file: str = ""
 
     # ── Form fields ────────────────────────────────────────────────────────────
     login_username: str = ""
@@ -88,6 +90,44 @@ class AuthState(rx.State):
     def switch_to_register(self):
         self.auth_tab = "register"
         self.auth_error = ""
+
+    # ── Avatar upload ──────────────────────────────────────────────────────────
+
+    def open_avatar_upload(self):
+        self.show_avatar_upload = True
+
+    def close_avatar_upload(self):
+        self.show_avatar_upload = False
+
+    async def upload_avatar(self, files: list[rx.UploadFile]):
+        """Загрузка аватарки пользователя."""
+        if not files or not self.user_uuid:
+            return
+        
+        try:
+            file = files[0]
+            upload_data = await file.read()
+            
+            # Отправляем файл на сервер
+            async with httpx.AsyncClient() as client:
+                # Создаём multipart/form-data запрос
+                files_dict = {"avatar": (file.filename, upload_data, file.content_type)}
+                resp = await client.post(
+                    f"{API_URL}/user/{self.user_uuid}/avatar",
+                    files=files_dict,
+                    timeout=30,
+                )
+                data = resp.json()
+            
+            if "icon" in data:
+                self.user_icon = data["icon"]
+                # Обновляем avatar_url в ProfileState
+                profile_state = await self.get_state("koritsu.state.profile_state.ProfileState")
+                profile_state.avatar_url = f"{API_URL}/{data['icon']}"
+            
+            self.show_avatar_upload = False
+        except Exception:
+            self.show_avatar_upload = False
 
     # ── Validation ─────────────────────────────────────────────────────────────
 

@@ -7,11 +7,11 @@ import sys
 import tempfile
 import uuid
 import reflex as rx
-from auth_state import AuthState 
+from .auth_state import AuthState 
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 _STATE_DIR   = os.path.dirname(os.path.abspath(__file__))
-SCHEMES_DIR  = os.path.dirname(os.path.join(_STATE_DIR, f"../../server/files/users/{}"))
+SCHEMES_DIR  = os.path.normpath(os.path.join(_STATE_DIR, "../../server/files/users"))
 BUG_DIR      = os.path.normpath(os.path.join(_STATE_DIR, "../../../db/bug_reports"))
 _FRAGMOS_DIR = os.path.normpath(os.path.join(_STATE_DIR, "../../../../modules/fragmos"))
 

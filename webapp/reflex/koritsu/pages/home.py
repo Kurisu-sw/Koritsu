@@ -148,10 +148,17 @@ def _user_menu() -> rx.Component:
                 ),
             ),
             rx.menu.item(
-                rx.hstack(
-                    rx.icon("settings", size=14, color=MUTED),
-                    rx.text("Настройки", font_family=SANS, font_size="13px"),
-                    spacing="2", align="center",
+                rx.link(
+                    rx.hstack(
+                        rx.icon("settings", size=14, color=MUTED),
+                        rx.text("Настройки", font_family=SANS, font_size="13px"),
+                        spacing="2", align="center",
+                    ),
+                    href="/profile",
+                    text_decoration="none",
+                    color="inherit",
+                    display="flex",
+                    width="100%",
                 ),
             ),
             rx.menu.separator(),
@@ -640,6 +647,112 @@ def _auth_modal() -> rx.Component:
     )
 
 
+# ── Avatar upload modal ──────────────────────────────────────────────────────
+
+def _avatar_upload_modal() -> rx.Component:
+    """Модальное окно загрузки аватарки."""
+    return rx.cond(
+        AuthState.show_avatar_upload,
+        rx.box(
+            # Backdrop
+            rx.box(
+                position="fixed",
+                inset="0",
+                background="rgba(0,0,0,0.60)",
+                backdrop_filter="blur(8px)",
+                z_index="300",
+                on_click=AuthState.close_avatar_upload,
+            ),
+            # Modal card
+            rx.box(
+                rx.vstack(
+                    rx.text(
+                        "Загрузить аватарку",
+                        color=TEXT,
+                        font_size="18px",
+                        font_weight="600",
+                        font_family=SANS,
+                        margin_bottom="8px",
+                    ),
+                    rx.text(
+                        "Выберите изображение для загрузки",
+                        color=MUTED,
+                        font_size="13px",
+                        font_family=SANS,
+                        margin_bottom="16px",
+                    ),
+                    rx.upload(
+                        rx.vstack(
+                            rx.icon("upload", size=32, color=MUTED),
+                            rx.text(
+                                "Перетащите файл сюда или кликните для выбора",
+                                color=MUTED,
+                                font_size="13px",
+                                font_family=SANS,
+                                text_align="center",
+                            ),
+                            spacing="2",
+                            align="center",
+                        ),
+                        accept={"image/*": [".png", ".jpg", ".jpeg", ".gif"]},
+                        max_files=1,
+                        border=f"2px dashed {BORDER}",
+                        border_radius="12px",
+                        padding="32px",
+                        width="100%",
+                        background="rgba(255,255,255,0.02)",
+                        _hover={"border_color": ACCENT, "background": "rgba(59,130,246,0.05)"},
+                    ),
+                    rx.hstack(
+                        rx.el.button(
+                            "Отмена",
+                            color=TEXT,
+                            font_size="14px",
+                            font_family=SANS,
+                            background=PANEL,
+                            border=f"1px solid {BORDER}",
+                            padding="10px 20px",
+                            border_radius="10px",
+                            cursor="pointer",
+                            on_click=AuthState.close_avatar_upload,
+                        ),
+                        rx.el.button(
+                            "Загрузить",
+                            color="white",
+                            font_size="14px",
+                            font_family=SANS,
+                            font_weight="600",
+                            background=f"linear-gradient(135deg,{ACCENT},#2563eb)",
+                            border="none",
+                            padding="10px 20px",
+                            border_radius="10px",
+                            cursor="pointer",
+                            on_click=lambda: AuthState.upload_avatar(rx.upload_files()),
+                        ),
+                        spacing="3",
+                        width="100%",
+                        justify_content="end",
+                    ),
+                    spacing="4",
+                    width="100%",
+                ),
+                position="fixed",
+                top="50%",
+                left="50%",
+                transform="translate(-50%, -50%)",
+                z_index="301",
+                background="rgba(12,12,20,0.95)",
+                border=f"1px solid {BORDER}",
+                border_radius="22px",
+                padding="28px",
+                backdrop_filter="blur(40px) saturate(180%)",
+                box_shadow="0 32px 80px rgba(0,0,0,0.6)",
+                width="min(420px, 90vw)",
+            ),
+        ),
+    )
+
+
 # ── Footer ─────────────────────────────────────────────────────────────────
 
 def _footer() -> rx.Component:
@@ -671,6 +784,7 @@ def home_page() -> rx.Component:
     return rx.box(
         _nav(),
         _auth_modal(),
+        _avatar_upload_modal(),
 
         # Main content
         rx.box(
