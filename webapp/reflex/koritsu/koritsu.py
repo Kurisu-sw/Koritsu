@@ -5,8 +5,7 @@ from koritsu.pages.fragmos import fragmos_page
 from koritsu.pages.engrafo import engrafo_page
 from koritsu.pages.profile import profile_page, profile_files_page, profile_referral_page
 from koritsu.pages.ref_page import ref_page, RefPageState  # noqa: F401
-from koritsu.pages.balancer_page import balancer_page
-from koritsu.pages.admin_user_page import admin_user_page
+from koritsu.pages.admin_panel import admin_panel_page
 from koritsu.state.fragmos_state import FragmosState
 from koritsu.state.auth_state import AuthState  # noqa: F401
 from koritsu.state.profile_state import ProfileState  # noqa: F401
@@ -22,12 +21,15 @@ app = rx.App(
     }
 )
 
-app.add_page(home_page,    route="/")
+app.add_page(home_page,    route="/", on_load=AuthState.check_auth_query)
 app.add_page(fragmos_page, route="/fragmos", on_load=[AuthState.do_refresh_user, FragmosState.on_load])
-app.add_page(engrafo_page, route="/engrafo")
-app.add_page(profile_page, route="/profile", on_load=ProfileState.load_user_data)
-app.add_page(profile_files_page, route="/profile/files", on_load=ProfileState.load_user_data)
-app.add_page(profile_referral_page, route="/profile/referral", on_load=ProfileState.load_user_data)
+app.add_page(engrafo_page, route="/engrafo", on_load=AuthState.do_refresh_user)
+app.add_page(profile_page, route="/profile",
+             on_load=[AuthState.do_refresh_user, ProfileState.load_user_data])
+app.add_page(profile_files_page, route="/profile/files",
+             on_load=[AuthState.do_refresh_user, ProfileState.load_user_data])
+app.add_page(profile_referral_page, route="/profile/referral",
+             on_load=[AuthState.do_refresh_user, ProfileState.load_user_data])
 app.add_page(ref_page, route="/ref/[ref_code]", on_load=RefPageState.on_load)
-app.add_page(balancer_page, route="/balancer", on_load=BalancerState.load_tasks)
-app.add_page(admin_user_page, route="/balancer/user")
+app.add_page(admin_panel_page, route="/sys/d7f3a1b9e2c4",
+             on_load=[AuthState.do_refresh_user, BalancerState.load_tasks, AdminState.check_topology])

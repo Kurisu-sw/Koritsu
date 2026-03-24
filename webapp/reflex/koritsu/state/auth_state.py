@@ -15,6 +15,9 @@ class AuthState(rx.State):
     sub_expire_date: str = ""
     tokens_left: int = 0
 
+    # ── Persistent session (localStorage) ────────────────────────────────────
+    stored_uuid: str = rx.LocalStorage(name="koritsu_uuid", sync=True)
+
     # ── Modal ──────────────────────────────────────────────────────────────────
     show_auth_modal: bool = False
     auth_tab: str = "login"
@@ -63,6 +66,24 @@ class AuthState(rx.State):
         return "Бессрочно"
 
     # ── Modal controls ─────────────────────────────────────────────────────────
+
+    async def check_auth_query(self):
+        """Restore session from localStorage + handle ?auth= query param."""
+        # Restore session if we have a stored UUID but no active session
+        if not self.user_uuid and self.stored_uuid:
+            self.user_uuid = self.stored_uuid
+            await self._load_user_data()
+            # If load failed (user deleted, etc.), clear everything
+            if not self.username:
+                self.user_uuid = ""
+                self.stored_uuid = ""
+
+        params = self.router.page.params
+        auth = params.get("auth", "")
+        if auth == "login":
+            self.open_login()
+        elif auth == "register":
+            self.open_register()
 
     def open_login(self):
         self.auth_tab = "login"
@@ -185,6 +206,7 @@ class AuthState(rx.State):
 
         # Success
         self.user_uuid = data.get("uuid", "")
+        self.stored_uuid = self.user_uuid  # persist to localStorage
         self._login_attempts = 0
         self.auth_error = ""
         await self._load_user_data()
@@ -195,6 +217,7 @@ class AuthState(rx.State):
 
     async def do_logout(self):
         self.user_uuid = ""
+        self.stored_uuid = ""  # clear localStorage
         self.username = ""
         self.user_icon = ""
         self.sub_level = "free"
@@ -202,9 +225,14 @@ class AuthState(rx.State):
         self.tokens_left = 0
 
     async def do_refresh_user(self):
-        """Обновляет данные текущего пользователя"""
+        """Restore session from localStorage if needed, then refresh user data."""
+        if not self.user_uuid and self.stored_uuid:
+            self.user_uuid = self.stored_uuid
         if self.user_uuid:
             await self._load_user_data()
+            if not self.username:
+                self.user_uuid = ""
+                self.stored_uuid = ""
 
     # ── Register ───────────────────────────────────────────────────────────────
 

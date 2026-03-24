@@ -1,4 +1,3 @@
-# Apple Liquid Glass — dark base
 
 BG      = "linear-gradient(135deg, #08080f 0%, #0b0f1a 50%, #07101e 100%)"
 PANEL   = "rgba(255,255,255,0.05)"

@@ -39,6 +39,13 @@ desktop.ini
 .web/
 .reflex
 
+*.py[cod]
+.web
+.states
+__pycache__/
+assets/external/
+*.db
+
 
 # Generated files
 *.xml

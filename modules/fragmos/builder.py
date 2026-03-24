@@ -139,7 +139,7 @@ class LoopLimitEnd(drawpyo.diagram.Object):
         self.height = 40 * m
         self.position = (cx - self.width // 2, y)
         self.apply_style_string(
-            "shape=loopLimit;whiteSpace=wrap;html=1;direction=west;")
+            "shape=loopLimit;whiteSpace=wrap;html=1;flipV=1;")
 
 
 class WaypointShape(drawpyo.diagram.Object):
@@ -679,7 +679,59 @@ class Renderer:
         # Обновляем текущую Y-координату для следующих элементов
         self.y = exit_y + gap
         return fr, exit_wp
-    
+
+    # ── FOR GOST (LoopLimit) ─────────────────────────────────────────────
+
+    def _render_for_gost(self, node, prev_obj):
+        """
+        Рендерит FOR-цикл в стиле ГОСТ 19.701-90:
+        LoopLimitStart → тело цикла → LoopLimitEnd.
+        Все соединены обычными стрелками вниз.
+        Возвращает (loop_start, loop_end).
+        """
+        cfg = self.cfg
+        gap = cfg['gap_y']
+
+        # ── LoopLimitStart (трапеция сверху) ──────────────────────────────
+        loop_start = LoopLimitStart(self.page, node['value'], self.cx, self.y)
+        if prev_obj:
+            _edge(self.page, prev_obj, loop_start, _DOWN)
+        self.y = _bot(loop_start) + gap
+
+        # ── Тело цикла ───────────────────────────────────────────────────
+        children = node.get('children', [])
+        last_child = loop_start
+
+        if children:
+            r = Renderer(self.page, children, self.cx, self.y, cfg,
+                         depth=self.depth + 1)
+            first_child, last_child = r.render()
+            _edge(self.page, loop_start, first_child, _DOWN)
+            self.y = r.y
+
+        # ── LoopLimitEnd (перевёрнутая трапеция снизу) ────────────────────
+        loop_end = LoopLimitEnd(self.page, node['value'], self.cx, self.y)
+        _edge(self.page, last_child, loop_end, _DOWN)
+        self.y = _bot(loop_end) + gap
+
+        # ── BBox (опционально) ────────────────────────────────────────────
+        if cfg.get('show_bbox'):
+            cl, cr, _ = (compute_bbox(children, cfg, self.depth + 1)
+                         if children else (0, 0, 0))
+            hw_start = loop_start.width // 2
+            hw_end = loop_end.width // 2
+            max_left = max(hw_start, hw_end, cl)
+            max_right = max(hw_start, hw_end, cr)
+            bbox_top = loop_start.position[1]
+            bbox_bot = _bot(loop_end)
+            BBoxShape(
+                self.page,
+                self.cx - max_left - 10, bbox_top - 6,
+                max_left + max_right + 20, bbox_bot - bbox_top + 12,
+                color="#e1d5e7", opacity=22)
+
+        return loop_start, loop_end
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # РАЗБИВКА НА ФУНКЦИИ
@@ -719,12 +771,12 @@ def _split_functions(nodes):
 # ЗАПУСК
 # ═══════════════════════════════════════════════════════════════════════════
 
-def generate(json_path, out_path=None, cfg_overrides=None):
+def generate(frg_path, out_path=None, cfg_overrides=None):
     """
-    Генерирует .xml блок-схему из .json файла.
+    Генерирует .xml блок-схему из .frg файла.
 
-    json_path     — путь к .json файлу
-    out_path      — путь для сохранения .xml (по умолчанию рядом с .json)
+    frg_path      — путь к .frg файлу
+    out_path      — путь для сохранения .xml (по умолчанию рядом с .frg)
     cfg_overrides — словарь с переопределениями настроек (необязательно)
     """
     import sys
@@ -736,11 +788,11 @@ def generate(json_path, out_path=None, cfg_overrides=None):
         base_cfg = dict(DEFAULT_CFG)
         base_cfg.update(cfg_overrides)
 
-    from parser import parse_frg_json_file
-    cfg, nodes = parse_frg_json_file(json_path, base_cfg=base_cfg)
+    from parser import parse_frg_file
+    cfg, nodes = parse_frg_file(frg_path, base_cfg=base_cfg)
 
     if out_path is None:
-        base = os.path.splitext(json_path)[0]
+        base = os.path.splitext(frg_path)[0]
         out_path = base + ".xml"
 
     if os.path.exists(out_path):

@@ -212,6 +212,16 @@ class Balancer:
             task.finished_at = time.time()
             task.result = result
 
+            # Логируем стоимость в консоль для администратора
+            cost = result.get("cost_rub") if isinstance(result, dict) else None
+            charged = result.get("charged_tokens") if isinstance(result, dict) else None
+            elapsed = task.finished_at - (task.started_at or task.created_at)
+            print(f"[balancer] DONE {task.task_uuid[:8]} | "
+                  f"user={task.username} | "
+                  f"{charged or '?'} tok | "
+                  f"{cost or '?'} ₽ | "
+                  f"{elapsed:.1f}s")
+
         except asyncio.TimeoutError:
             task.status = TaskStatus.EXPIRED
             task.finished_at = time.time()

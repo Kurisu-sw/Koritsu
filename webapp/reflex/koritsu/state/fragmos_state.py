@@ -16,8 +16,8 @@ BUG_DIR      = os.path.normpath(os.path.join(_STATE_DIR, "../../../db/bug_report
 API_URL = "http://localhost:8001"
 # ── Models ────────────────────────────────────────────────────────────────────
 MODELS: dict[str, str] = {
-    "Bauman 19.701": "fvt60bpn6f51khbi7jjt",
-    "GU 19.701":     "fvtttdmeunp9a9e48npi",
+    "Bauman 19.701": "literal",
+    "GU 19.701":     "gost",
 }
 
 _EMPTY_XML = (
@@ -287,11 +287,6 @@ class FragmosState(rx.State):
             self.generation_error = "Требуется авторизация"
             return
 
-        # Проверка баланса перед генерацией (минимальный резерв)
-        if self.user_tokens < 100:
-            self.generation_error = f"Недостаточно токенов. Баланс: {self.user_tokens}"
-            return
-
         saved_code = self.code_input
         self.code_input = ""
         self.is_generating = True
@@ -299,11 +294,38 @@ class FragmosState(rx.State):
         self.last_submitted_code = saved_code
         yield
 
-        # Получаем username для балансера
+        # ── Шаг 1: оценка токенов ─────────────────────────────────────────
+        try:
+            async with httpx.AsyncClient() as client:
+                est_resp = await client.post(
+                    f"{API_URL}/fragmos/estimate",
+                    json={"code": saved_code, "model_id": MODELS.get(self.selected_model, "literal")},
+                    timeout=15,
+                )
+                est_data = est_resp.json()
+        except Exception as exc:
+            self.generation_error = f"Ошибка оценки токенов: {exc}"
+            self.is_generating = False
+            return
+
+        if "error" in est_data:
+            self.generation_error = est_data["error"]
+            self.is_generating = False
+            return
+
+        required = est_data.get("required_with_buffer", 0)
+        if self.user_tokens < required:
+            self.generation_error = (
+                f"Недостаточно токенов. "
+                f"Требуется: ~{required}, баланс: {self.user_tokens}"
+            )
+            self.is_generating = False
+            return
+
+        # ── Шаг 2: отправка в балансер ─────────────────────────────────────
         auth_state = await self.get_state(AuthState)
         username = auth_state.username or "unknown"
 
-        # Отправляем задачу в балансер
         payload = {
             "code": saved_code,
             "user_uuid": self.user_uuid,
@@ -349,6 +371,8 @@ class FragmosState(rx.State):
 
                 if status == "completed":
                     result = task_data.get("result", {})
+                    if not isinstance(result, dict):
+                        result = {}
                     tokens = result.get("charged_tokens", 0)
                     fname = result.get("xml_filename", "")
 
@@ -360,13 +384,20 @@ class FragmosState(rx.State):
                             break
 
                     self.last_tokens = tokens
-                    self.last_ai_response = json.dumps(result)
+                    self.last_ai_response = result.get("ai_json", "")
                     success = True
                     break
 
                 elif status == "failed":
-                    self.generation_error = task_data.get("error", "Ошибка генерации")
-                    self.last_ai_response = task_data.get("error", "")
+                    error_text = task_data.get("error", "Ошибка генерации")
+                    # Извлекаем ai_json из ошибки если есть
+                    if "---AI_JSON---" in error_text:
+                        parts = error_text.split("---AI_JSON---", 1)
+                        self.generation_error = parts[0].strip()
+                        self.last_ai_response = parts[1].strip() if len(parts) > 1 else ""
+                    else:
+                        self.generation_error = error_text
+                        self.last_ai_response = error_text
                     break
 
                 elif status == "expired":

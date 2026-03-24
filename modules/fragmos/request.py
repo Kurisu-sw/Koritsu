@@ -1,26 +1,55 @@
 
-import openai
-import requests
 import hashlib
-import queue
-import threading
-import time
 import re
 import os
+import httpx
+
+from yandex_ai_studio_sdk import AsyncAIStudio
 
 
 # ─────────────────────────────────────────
 # CONSTANTS
 # ─────────────────────────────────────────
 
-YANDEX_API_BASE = "https://ai.api.cloud.yandex.net/v1"
-TOKENIZER_URL   = "https://llm.api.cloud.yandex.net/foundationModels/v1/tokenize"
-FILES_URL       = "https://ai.api.cloud.yandex.net/v1/files"
+FILES_URL = "https://ai.api.cloud.yandex.net/v1/files"
+TOKENIZE_URL = "https://llm.api.cloud.yandex.net/foundationModels/v1/tokenize"
+
+BASE_MODEL = "yandexgpt"
 
 TOKEN_MULTIPLIER = 2
 
-API_KEY    = ""
-PROJECT_ID = ""
+_DEFAULT_API_KEY = "2-"
+_DEFAULT_PROJECT_ID = "2"
+
+API_KEY = os.getenv("YC_API_KEY") or os.getenv("YANDEX_API_KEY") or _DEFAULT_API_KEY
+PROJECT_ID = os.getenv("YANDEX_PROJECT_ID") or _DEFAULT_PROJECT_ID
+
+
+# ─────────────────────────────────────────
+# PROMPTS (загружаются один раз при импорте)
+# ─────────────────────────────────────────
+
+_PROMPTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prompts")
+
+def _load_prompt(name: str) -> str:
+    path = os.path.join(_PROMPTS_DIR, name)
+    with open(path, "r", encoding="utf-8") as f:
+        return f.read().strip()
+
+# Кэш промптов — грузятся 1 раз
+PROMPTS: dict[str, str] = {}
+
+def get_prompt(prompt_key: str) -> str:
+    """Возвращает system prompt по ключу. Кэширует после первой загрузки."""
+    if prompt_key not in PROMPTS:
+        PROMPTS[prompt_key] = _load_prompt(prompt_key)
+    return PROMPTS[prompt_key]
+
+# Маппинг "модель" → файл промпта
+PROMPT_MAP = {
+    "literal": "bau.md",    # Дословный перевод кода
+    "gost":    "gu.md",     # ГОСТ 19.701-90 русский псевдокод
+}
 
 
 # ─────────────────────────────────────────
@@ -29,34 +58,29 @@ PROJECT_ID = ""
 
 class AI_API:
     """
-    Клиент Yandex AI API.
+    Async клиент Yandex AI через yandex-ai-studio-sdk.
 
     api_key    — IAM или API-ключ Yandex Cloud
     project_id — folder_id / project_id
     """
 
     def __init__(self, api_key: str = None, project_id: str = None):
-        self.api_key    = api_key    or API_KEY
+        self.api_key = api_key or API_KEY
         self.project_id = project_id or PROJECT_ID
-        self._client    = None
-
-    # ─────────────────────────────────────────
-    # CLIENT
-    # ─────────────────────────────────────────
-
-    def create_client(self) -> openai.OpenAI:
-        self._client = openai.OpenAI(
-            api_key=self.api_key,
-            base_url=YANDEX_API_BASE,
-            project=self.project_id,
-        )
-        return self._client
+        if not self.api_key:
+            raise ValueError("API key не задан: передайте api_key или установите YC_API_KEY")
+        if not self.project_id:
+            raise ValueError("Project ID не задан: передайте project_id или установите YANDEX_PROJECT_ID")
+        self._sdk: AsyncAIStudio | None = None
 
     @property
-    def client(self) -> openai.OpenAI:
-        if self._client is None:
-            self.create_client()
-        return self._client
+    def sdk(self) -> AsyncAIStudio:
+        if self._sdk is None:
+            self._sdk = AsyncAIStudio(
+                folder_id=self.project_id,
+                auth=self.api_key,
+            )
+        return self._sdk
 
 
     # ─────────────────────────────────────────
@@ -77,29 +101,42 @@ class AI_API:
 
 
     # ─────────────────────────────────────────
-    # TOKENIZER
+    # TOKENIZER (via REST API)
     # ─────────────────────────────────────────
 
-    def yandex_tokenize(self, text: str) -> list:
+    async def _tokenize(self, text: str) -> int:
+        """Подсчитывает количество токенов через REST Tokenize API."""
+        model_uri = f"gpt://{self.project_id}/{BASE_MODEL}"
         headers = {
             "Authorization": f"Api-Key {self.api_key}",
-            "Content-Type":  "application/json",
+            "Content-Type": "application/json",
         }
-        data = {
-            "modelUri": f"gpt://{self.project_id}/yandexgpt/latest",
+        body = {
+            "modelUri": model_uri,
             "text": text,
         }
-        r = requests.post(TOKENIZER_URL, headers=headers, json=data)
-        r.raise_for_status()
-        return r.json()["tokens"]
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(TOKENIZE_URL, json=body, headers=headers, timeout=15)
+            resp.raise_for_status()
+            data = resp.json()
+        return len(data.get("tokens", []))
 
-    def count_tokens(self, tokens: list) -> int:
-        return len(tokens)
+    async def estimate_tokens_from_text(
+            self, text: str, prompt_key: str = None, max_tokens: int = 800) -> int:
+        """
+        Оценивает общее количество токенов для генерации:
+        input (system prompt + текст) + output (max_tokens как worst-case).
+        """
+        input_tokens = await self._tokenize(text)
 
-    def estimate_tokens_from_text(self, text: str) -> int:
-        """Подсчитывает количество токенов через Yandex Tokenizer."""
-        tokens = self.yandex_tokenize(text)
-        return self.count_tokens(tokens)
+        # Добавляем токены system prompt если указан prompt_key
+        if prompt_key:
+            prompt_file = PROMPT_MAP.get(prompt_key, prompt_key)
+            system_prompt = get_prompt(prompt_file)
+            input_tokens += await self._tokenize(system_prompt)
+
+        # Worst-case: модель выдаст max_tokens на выходе
+        return input_tokens + max_tokens
 
 
     # ─────────────────────────────────────────
@@ -108,7 +145,41 @@ class AI_API:
 
     def yandex_tokens_from_usage(self, usage) -> int:
         """Возвращает фактическое количество токенов из объекта usage."""
-        return getattr(usage, "total_tokens", 0)
+        # DEBUG: показать структуру usage для отладки
+        print(f"[tokens] usage type={type(usage).__name__}, repr={usage!r}")
+        if hasattr(usage, "__dict__"):
+            print(f"[tokens] usage.__dict__={usage.__dict__}")
+
+        total = 0
+
+        # 1. Объект SDK с атрибутами
+        if hasattr(usage, "total_tokens") and usage.total_tokens:
+            total = int(usage.total_tokens)
+        elif hasattr(usage, "totalTokens") and usage.totalTokens:
+            total = int(usage.totalTokens)
+
+        # 2. Если total_tokens == 0 или отсутствует — суммируем input + completion
+        if total == 0:
+            inp = (getattr(usage, "input_text_tokens", 0)
+                   or getattr(usage, "inputTextTokens", 0) or 0)
+            comp = (getattr(usage, "completion_tokens", 0)
+                    or getattr(usage, "completionTokens", 0) or 0)
+            if inp or comp:
+                total = int(inp) + int(comp)
+
+        # 3. Словарь (fallback)
+        if total == 0 and isinstance(usage, dict):
+            total = int(usage.get("total_tokens", 0)
+                        or usage.get("totalTokens", 0) or 0)
+            if total == 0:
+                inp = int(usage.get("input_text_tokens", 0)
+                          or usage.get("inputTextTokens", 0) or 0)
+                comp = int(usage.get("completion_tokens", 0)
+                           or usage.get("completionTokens", 0) or 0)
+                total = inp + comp
+
+        print(f"[tokens] resolved total_tokens={total}")
+        return total
 
     def charged_tokens(self, yandex_tokens: int) -> int:
         """
@@ -119,127 +190,67 @@ class AI_API:
 
 
     # ─────────────────────────────────────────
-    # GENERATION
+    # GENERATION (async via SDK + system prompt)
     # ─────────────────────────────────────────
 
-    def create_generation_request(
+    async def generate(
             self,
-            prompt_id: str,
-            input_text: str,
-            max_tokens: int = 800,
-            temperature: float = 0) -> str:
-        """Создаёт фоновый (background) запрос генерации. Возвращает task_id."""
-        resp = self.client.responses.create(
-            prompt={"id": prompt_id},
-            input=input_text,
-            background=True,
-            max_output_tokens=max_tokens,
-            temperature=temperature,
-            extra_body={"reasoningOptions": {"mode": "DISABLED"}},
-        )
-        return resp.id
-
-    def create_generation_request_sync(
-            self,
-            prompt_id: str,
+            prompt_key: str,
             input_text: str,
             max_tokens: int = 800,
             temperature: float = 0):
-        """Создаёт синхронный запрос генерации (background=False). Возвращает response."""
-        return self.client.responses.create(
-            prompt={"id": prompt_id},
-            input=input_text,
-            background=False,
-            max_output_tokens=max_tokens,
+        """
+        Запрос генерации с system prompt (async, deferred).
+        prompt_key — ключ из PROMPT_MAP (literal / gost).
+        Возвращает dict: {text, total_tokens, usage}.
+        """
+        prompt_file = PROMPT_MAP.get(prompt_key, prompt_key)
+        system_prompt = get_prompt(prompt_file)
+
+        model = self.sdk.models.completions(BASE_MODEL)
+        model = model.configure(
             temperature=temperature,
-            extra_body={"reasoningOptions": {"mode": "DISABLED"}},
+            max_tokens=max_tokens,
         )
 
+        messages = [
+            {"role": "system", "text": system_prompt},
+            {"role": "user", "text": input_text},
+        ]
 
-    # ─────────────────────────────────────────
-    # STATUS
-    # ─────────────────────────────────────────
+        operation = await model.run_deferred(messages)
+        result = await operation
 
-    def retrieve_generation_status(self, task_id: str):
-        return self.client.responses.retrieve(task_id)
+        # Извлекаем текст
+        text = ""
+        if hasattr(result, "alternatives") and result.alternatives:
+            alt = result.alternatives[0]
+            if hasattr(alt, "text"):
+                text = (alt.text or "").strip()
+            elif hasattr(alt, "message") and hasattr(alt.message, "text"):
+                text = (alt.message.text or "").strip()
+        elif hasattr(result, "text"):
+            text = (result.text or "").strip()
 
-    def wait_until_complete(self, task_id: str, delay: float = 1):
-        while True:
-            status = self.retrieve_generation_status(task_id)
-            if status.status in ("completed", "failed", "cancelled"):
-                return status
-            time.sleep(delay)
+        # Извлекаем usage
+        usage = getattr(result, "usage", {})
+        total_tokens = self.yandex_tokens_from_usage(usage)
 
+        return {
+            "text": text,
+            "total_tokens": total_tokens,
+            "usage": usage,
+        }
 
-    # ─────────────────────────────────────────
-    # OUTPUT
-    # ─────────────────────────────────────────
-
-    def extract_output_text(self, status) -> str:
-        return (status.output_text or "").strip()
-
-    def clean_markdown_json(self, text: str) -> str:
-        text = re.sub(r'^```[a-zA-Z]*\s*', '', text)
-        text = re.sub(r'\s*```$', '', text)
+    def clean_ai_output(self, text: str) -> str:
+        """Убирает markdown-обёртки (```...```) из ответа нейронки."""
+        # Убираем первую строку ```lang и последнюю строку ```
+        text = re.sub(r'^```[a-zA-Z]*\n?', '', text)
+        text = re.sub(r'\n?```$', '', text)
         return text.strip()
 
-
-    # ─────────────────────────────────────────
-    # FILE UPLOAD (Yandex Files API)
-    # ─────────────────────────────────────────
-
-    def upload_file(self, file_path: str, purpose: str = "assistants") -> dict:
-        """
-        Загружает файл блок-схемы в Yandex Files API.
-
-        file_path — путь к файлу (XML, JSON и др.)
-        purpose   — назначение файла (assistants / fine-tune)
-
-        Возвращает dict с id файла и метаданными.
-        """
-        headers = {
-            "Authorization": f"Api-Key {self.api_key}",
-        }
-        with open(file_path, "rb") as f:
-            files = {
-                "file":    (os.path.basename(file_path), f, "application/octet-stream"),
-                "purpose": (None, purpose),
-            }
-            r = requests.post(FILES_URL, headers=headers, files=files)
-        r.raise_for_status()
-        return r.json()
-
-    def list_files(self) -> list:
-        """Возвращает список загруженных файлов из Yandex Files API."""
-        headers = {"Authorization": f"Api-Key {self.api_key}"}
-        r = requests.get(FILES_URL, headers=headers)
-        r.raise_for_status()
-        return r.json().get("data", [])
-
-    def delete_file(self, file_id: str) -> bool:
-        """Удаляет файл из Yandex Files API."""
-        headers = {"Authorization": f"Api-Key {self.api_key}"}
-        r = requests.delete(f"{FILES_URL}/{file_id}", headers=headers)
-        r.raise_for_status()
-        return True
-
-    def upload_schemes_from_dir(self, schemes_dir: str, extensions: tuple = (".xml",)) -> list:
-        """
-        Загружает все файлы блок-схем из указанной папки в Yandex Files API.
-        Возвращает список результатов: [{"file": str, "status": "ok"|"error", ...}].
-        """
-        results = []
-        if not os.path.isdir(schemes_dir):
-            return results
-        for fname in os.listdir(schemes_dir):
-            if fname.lower().endswith(extensions):
-                fpath = os.path.join(schemes_dir, fname)
-                try:
-                    data = self.upload_file(fpath)
-                    results.append({"file": fname, "status": "ok", "data": data})
-                except Exception as exc:
-                    results.append({"file": fname, "status": "error", "error": str(exc)})
-        return results
+    # Обратная совместимость
+    clean_markdown_json = clean_ai_output
 
 
     # ─────────────────────────────────────────
@@ -253,80 +264,28 @@ class AI_API:
         cache[key] = value
 
 
-    # ─────────────────────────────────────────
-    # QUEUE
-    # ─────────────────────────────────────────
-
-    def create_task_queue(self) -> queue.Queue:
-        return queue.Queue()
-
-    def queue_add(self, task_queue: queue.Queue, item):
-        task_queue.put(item)
-
-    def queue_get(self, task_queue: queue.Queue):
-        return task_queue.get()
-
-    def queue_task_done(self, task_queue: queue.Queue):
-        task_queue.task_done()
-
-    def queue_empty(self, task_queue: queue.Queue) -> bool:
-        return task_queue.empty()
-
-
-    # ─────────────────────────────────────────
-    # WORKER
-    # ─────────────────────────────────────────
-
-    def queue_worker(self, task_queue: queue.Queue, handler, delay: float = 1):
-        while True:
-            if self.queue_empty(task_queue):
-                time.sleep(delay)
-                continue
-            task = self.queue_get(task_queue)
-            try:
-                handler(task)
-            finally:
-                self.queue_task_done(task_queue)
-
-    def start_worker(self, task_queue: queue.Queue, handler) -> threading.Thread:
-        t = threading.Thread(
-            target=self.queue_worker,
-            args=(task_queue, handler),
-            daemon=True,
-        )
-        t.start()
-        return t
-
-
 # ─────────────────────────────────────────
-# STANDALONE REQUEST FUNCTION
-# (для совместимости с pipeline.py)
+# STANDALONE REQUEST FUNCTION (async)
 # ─────────────────────────────────────────
 
-def request(
+async def request(
         code_path: str,
         model_id: str = None,
         api_key: str = None,
         project_id: str = None) -> tuple:
     """
-    Отправляет код в Yandex AI и возвращает (json_text, charged_tokens).
-    charged_tokens = yandex_tokens × TOKEN_MULTIPLIER.
+    Отправляет код в Yandex AI и возвращает (frg_text, charged_tokens).
+    model_id = "literal" или "gost"
     """
-    api  = AI_API(api_key=api_key, project_id=project_id)
+    api = AI_API(api_key=api_key, project_id=project_id)
     code = api.read_file(code_path)
 
     if model_id is None:
-        raise ValueError("model_id обязателен")
+        raise ValueError("model_id обязателен (literal / gost)")
 
-    task_id = api.create_generation_request(prompt_id=model_id, input_text=code)
-    status  = api.wait_until_complete(task_id)
+    result = await api.generate(prompt_key=model_id, input_text=code)
 
-    if status.status != "completed":
-        raise RuntimeError(f"Генерация завершилась со статусом: {status.status}")
-
-    raw_text    = api.extract_output_text(status)
-    json_text   = api.clean_markdown_json(raw_text)
-    yandex_tok  = api.yandex_tokens_from_usage(status.usage)
-    charge_tok  = api.charged_tokens(yandex_tok)
+    json_text = api.clean_markdown_json(result["text"])
+    charge_tok = api.charged_tokens(result["total_tokens"])
 
     return json_text, charge_tok

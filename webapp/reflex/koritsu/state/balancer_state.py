@@ -1,5 +1,6 @@
 """State for the Balancer admin/test page."""
 
+import json
 import reflex as rx
 import httpx
 import uuid as uuid_mod
@@ -92,3 +93,13 @@ class BalancerState(rx.State):
     @rx.var
     def failed_count(self) -> int:
         return sum(1 for t in self.tasks if t.get("status") == "failed")
+
+    @rx.var
+    def selected_task_result_str(self) -> str:
+        """Serialize selected_task['result'] to a JSON string for safe rendering."""
+        result = self.selected_task.get("result")
+        if result is None:
+            return ""
+        if isinstance(result, dict):
+            return json.dumps(result, ensure_ascii=False, indent=2)
+        return str(result)

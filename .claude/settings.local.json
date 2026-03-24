@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import ast; ast.parse\\(open\\(''koritsu/pages/admin_panel.py''\\).read\\(\\)\\); print\\(''admin_panel.py: OK''\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\(''koritsu/state/admin_state.py''\\).read\\(\\)\\); print\\(''admin_state.py: OK''\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\(''koritsu/koritsu.py''\\).read\\(\\)\\); print\\(''koritsu.py: OK''\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\(''service_api.py''\\).read\\(\\)\\); print\\(''service_api.py: OK''\\)\")",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:deepwiki.com)",
+      "Bash(python -c \":*)",
+      "Bash(python -c \"from yandex_ai_studio_sdk import AsyncAIStudio; print\\(''new SDK available''\\)\")"
+    ]
+  }
+}

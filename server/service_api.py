@@ -52,20 +52,35 @@ async def _fragmos_handler(payload: dict) -> dict:
     with open(code_path, "w", encoding="utf-8") as f:
         f.write(code)
 
-    def _run():
-        if _MODULES_DIR not in sys.path:
-            sys.path.insert(0, _MODULES_DIR)
-        from pipeline import run as pipeline_run  # type: ignore
-        result_path, charged = pipeline_run(
+    if _MODULES_DIR not in sys.path:
+        sys.path.insert(0, _MODULES_DIR)
+
+    # Принудительно перезагружаем модули fragmos при каждом вызове,
+    # чтобы изменения в request.py/pipeline.py подхватывались без рестарта сервера
+    for _mod in ("request", "pipeline", "builder"):
+        sys.modules.pop(_mod, None)
+
+    from pipeline import run as pipeline_run  # type: ignore
+
+    ai_json = ""
+    try:
+        result_path, charged, cost_rub, ai_json = await pipeline_run(
             code_path, xml_path,
             cfg_overrides=cfg,
             model_id=model_id,
             token_budget=token_budget,
         )
-        return result_path, charged
-
-    try:
-        result_path, charged = await asyncio.to_thread(_run)
+    except Exception as exc:
+        # Если pipeline упал (например builder не смог парсить JSON),
+        # пытаемся прочитать сырой JSON из временного файла
+        json_path = os.path.splitext(code_path)[0] + ".json"
+        if not ai_json:
+            try:
+                with open(json_path, encoding="utf-8") as f:
+                    ai_json = f.read()
+            except Exception:
+                pass
+        raise RuntimeError(f"{exc}\n---AI_JSON---\n{ai_json}") from exc
     finally:
         try:
             os.remove(code_path)
@@ -73,14 +88,30 @@ async def _fragmos_handler(payload: dict) -> dict:
         except OSError:
             pass
 
+    # Read the generated XML content to include in the result
+    xml_content = ""
+    try:
+        with open(result_path, encoding="utf-8") as f:
+            xml_content = f.read()
+    except Exception:
+        pass
+
     return {
         "xml_path": result_path,
         "xml_filename": fname,
+        "xml_content": xml_content,
         "charged_tokens": charged,
+        "cost_rub": round(cost_rub, 2),
+        "ai_json": ai_json,
     }
 
 
 balancer.register_handler("fragmos", _fragmos_handler)
+
+
+class EstimateRequest(BaseModel):
+    code: str
+    model_id: str = "literal"
 
 
 @asynccontextmanager
@@ -93,6 +124,40 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 app.include_router(balancer_router)
 DB_PATH = os.getenv("DATABASE_NAME")
+
+
+@app.post("/fragmos/estimate")
+async def fragmos_estimate(data: EstimateRequest):
+    """
+    Оценивает количество токенов для кода (до отправки в балансер).
+    Возвращает: {estimated_yandex, estimated_charged, estimated_cost_rub}
+    """
+    if not data.code.strip():
+        return {"error": "Empty code"}
+
+    if _MODULES_DIR not in sys.path:
+        sys.path.insert(0, _MODULES_DIR)
+
+    for _mod in ("request", "pipeline"):
+        sys.modules.pop(_mod, None)
+
+    from request import AI_API, TOKEN_MULTIPLIER  # type: ignore
+    from pipeline import TOKEN_BUFFER, YANDEX_PRICE_PER_1K  # type: ignore
+
+    api = AI_API()
+    yandex_tokens = await api.estimate_tokens_from_text(
+        data.code, prompt_key=data.model_id
+    )
+    charged = max(1, (yandex_tokens // 100) * TOKEN_MULTIPLIER)
+    required = charged + TOKEN_BUFFER
+    cost_rub = yandex_tokens / 1000 * YANDEX_PRICE_PER_1K
+
+    return {
+        "estimated_yandex": yandex_tokens,
+        "estimated_charged": charged,
+        "required_with_buffer": required,
+        "estimated_cost_rub": round(cost_rub, 2),
+    }
 
 # Раздаём файлы из files/ по URL /files/...
 os.makedirs("files", exist_ok=True)
@@ -130,6 +195,12 @@ def init_db():
         conn.execute("ALTER TABLE users ADD COLUMN referred_by TEXT")
     except sq.OperationalError:
         pass
+    # Ban system columns
+    for col, typ in [("is_banned", "INTEGER DEFAULT 0"), ("ban_reason", "TEXT"), ("ban_until", "DATETIME")]:
+        try:
+            conn.execute(f"ALTER TABLE users ADD COLUMN {col} {typ}")
+        except sq.OperationalError:
+            pass
     conn.execute("""
         CREATE TABLE IF NOT EXISTS referrals (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -199,6 +270,12 @@ class Update(BaseModel):
     newitem: str
     olditem: str = ""  # нужен только при смене пароля
 
+class BanRequest(BaseModel):
+    reason: str = ""
+    timeout_minutes: int = 0  # 0 = permanent ban
+
+class AdminPasswordReset(BaseModel):
+    new_password: str
 
 
 #API SETTINGS
@@ -271,6 +348,9 @@ def get_user_data(uuid: str):
             "sub_level": row["sub_level"],
             "sub_expire_date": row["sub_expire_date"],
             "tokens_left": row["tokens_left"],
+            "is_banned": row["is_banned"] if "is_banned" in row.keys() else 0,
+            "ban_reason": row["ban_reason"] if "ban_reason" in row.keys() else None,
+            "ban_until": row["ban_until"] if "ban_until" in row.keys() else None,
         }}
 
 @app.get("/user/{uuid}/{folder}")
@@ -391,6 +471,119 @@ def update_item(uuid: str, data: Update):
         case _:
             conn.close()
             return {"error": f"Unknown field: {data.item}"}
+
+
+# ── Admin endpoints ───────────────────────────────────────────────────────────
+
+@app.get("/admin/health")
+def admin_health():
+    """Check DB connectivity."""
+    try:
+        conn = get_db()
+        conn.execute("SELECT 1").fetchone()
+        conn.close()
+        return {"status": "ok"}
+    except Exception as e:
+        return {"status": "error", "detail": str(e)}
+
+@app.get("/admin/search")
+def admin_search_user(username: str = ""):
+    """Search user by username (partial match)."""
+    if not username.strip():
+        return {"error": "Username query is empty"}
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT uuid, username, display_name, sub_level, sub_expire_date, tokens_left, is_banned, ban_reason, ban_until FROM users WHERE username LIKE ? LIMIT 20",
+        (f"%{username.strip()}%",)
+    ).fetchall()
+    conn.close()
+    return {"users": [dict(r) for r in rows]}
+
+
+@app.post("/admin/user/{uuid}/ban")
+def admin_ban_user(uuid: str, data: BanRequest):
+    """Ban or timeout a user."""
+    conn = get_db()
+    row = conn.execute("SELECT uuid FROM users WHERE uuid = ?", (uuid,)).fetchone()
+    if row is None:
+        conn.close()
+        return {"error": "User not exist"}
+
+    ban_until = None
+    if data.timeout_minutes > 0:
+        from datetime import datetime, timedelta
+        ban_until = (datetime.utcnow() + timedelta(minutes=data.timeout_minutes)).isoformat()
+
+    conn.execute(
+        "UPDATE users SET is_banned = 1, ban_reason = ?, ban_until = ? WHERE uuid = ?",
+        (data.reason, ban_until, uuid)
+    )
+    conn.commit()
+    conn.close()
+    return {"success": "User banned", "ban_until": ban_until}
+
+
+@app.post("/admin/user/{uuid}/unban")
+def admin_unban_user(uuid: str):
+    """Unban a user."""
+    conn = get_db()
+    row = conn.execute("SELECT uuid FROM users WHERE uuid = ?", (uuid,)).fetchone()
+    if row is None:
+        conn.close()
+        return {"error": "User not exist"}
+    conn.execute("UPDATE users SET is_banned = 0, ban_reason = NULL, ban_until = NULL WHERE uuid = ?", (uuid,))
+    conn.commit()
+    conn.close()
+    return {"success": "User unbanned"}
+
+
+@app.delete("/admin/user/{uuid}")
+def admin_delete_user(uuid: str):
+    """Delete a user and their files."""
+    conn = get_db()
+    row = conn.execute("SELECT uuid FROM users WHERE uuid = ?", (uuid,)).fetchone()
+    if row is None:
+        conn.close()
+        return {"error": "User not exist"}
+    conn.execute("DELETE FROM referrals WHERE owner_uuid = ?", (uuid,))
+    conn.execute("DELETE FROM users WHERE uuid = ?", (uuid,))
+    conn.commit()
+    conn.close()
+    # Remove user files
+    import shutil
+    user_folder = f"files/users/{uuid}"
+    if os.path.exists(user_folder):
+        shutil.rmtree(user_folder, ignore_errors=True)
+    return {"success": "User deleted"}
+
+
+@app.post("/admin/user/{uuid}/reset-password")
+def admin_reset_password(uuid: str, data: AdminPasswordReset):
+    """Admin force-reset password (no old password needed)."""
+    conn = get_db()
+    row = conn.execute("SELECT uuid FROM users WHERE uuid = ?", (uuid,)).fetchone()
+    if row is None:
+        conn.close()
+        return {"error": "User not exist"}
+    new_hash = hashlib.sha256((data.new_password + uuid).encode()).hexdigest()
+    conn.execute("UPDATE users SET password = ? WHERE uuid = ?", (new_hash, uuid))
+    conn.commit()
+    conn.close()
+    return {"success": "Password reset"}
+
+
+@app.patch("/admin/user/{uuid}/sub-level")
+def admin_update_sub_level(uuid: str, data: Update):
+    """Admin update subscription level."""
+    conn = get_db()
+    row = conn.execute("SELECT uuid FROM users WHERE uuid = ?", (uuid,)).fetchone()
+    if row is None:
+        conn.close()
+        return {"error": "User not exist"}
+    conn.execute("UPDATE users SET sub_level = ? WHERE uuid = ?", (data.newitem, uuid))
+    conn.commit()
+    conn.close()
+    return {"success": f"Sub level set to {data.newitem}"}
 
 
 # ── Реферальная программа ─────────────────────────────────────────────────────
