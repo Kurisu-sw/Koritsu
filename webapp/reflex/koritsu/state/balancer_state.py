@@ -1,11 +1,12 @@
 """State for the Balancer admin/test page."""
 
 import json
+import os
 import reflex as rx
 import httpx
 import uuid as uuid_mod
 
-API = "http://localhost:8001"
+API = os.getenv("FASTAPI_URL", "http://localhost:8001")
 
 
 class BalancerState(rx.State):

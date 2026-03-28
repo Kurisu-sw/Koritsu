@@ -1,9 +1,9 @@
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, Request
 from fastapi.staticfiles import StaticFiles
 import sqlite3 as sq
 import uuid
 from pydantic import BaseModel
-import hashlib
+import bcrypt
 from dotenv import load_dotenv
 import os
 import random
@@ -14,7 +14,26 @@ import asyncio
 import sys
 import tempfile
 
-load_dotenv()
+_SERVER_DIR = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.dirname(_SERVER_DIR)
+load_dotenv(os.path.join(_PROJECT_ROOT, ".env"))
+
+import re as _re
+
+# UUID format validation
+_UUID_RE = _re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', _re.IGNORECASE)
+# Username: 3-32 chars, alphanumeric + underscores + hyphens, no path chars
+_USERNAME_RE = _re.compile(r'^[a-zA-Zа-яА-ЯёЁ0-9_\-]{3,32}$')
+# Max avatar file size: 2MB
+MAX_AVATAR_SIZE = 2 * 1024 * 1024
+
+
+def _valid_uuid(s: str) -> bool:
+    return bool(_UUID_RE.match(s))
+
+
+def _valid_username(s: str) -> bool:
+    return bool(_USERNAME_RE.match(s))
 
 # ── Fragmos handler for Balancer ─────────────────────────────────────────────
 
@@ -31,6 +50,7 @@ async def _fragmos_handler(payload: dict) -> dict:
     user_uuid = payload.get("user_uuid", "")
     model_id = payload.get("model_id")
     token_budget = payload.get("token_budget")
+    token_spent = payload.get("token_spent", 0)
     cfg = payload.get("cfg", {})
 
     if not code.strip():
@@ -69,6 +89,7 @@ async def _fragmos_handler(payload: dict) -> dict:
             cfg_overrides=cfg,
             model_id=model_id,
             token_budget=token_budget,
+            token_spent=token_spent,
         )
     except Exception as exc:
         # Если pipeline упал (например builder не смог парсить JSON),
@@ -123,14 +144,14 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 app.include_router(balancer_router)
-DB_PATH = os.getenv("DATABASE_NAME")
+DB_PATH = os.getenv("DATABASE_NAME", "files/koritsu.db")
 
 
 @app.post("/fragmos/estimate")
 async def fragmos_estimate(data: EstimateRequest):
     """
-    Оценивает количество токенов для кода (до отправки в балансер).
-    Возвращает: {estimated_yandex, estimated_charged, estimated_cost_rub}
+    Оценивает стоимость генерации в рублях и внутренних токенах.
+    Возвращает: {estimated_yandex, estimated_charged, required_with_buffer, estimated_cost_rub}
     """
     if not data.code.strip():
         return {"error": "Empty code"}
@@ -141,22 +162,20 @@ async def fragmos_estimate(data: EstimateRequest):
     for _mod in ("request", "pipeline"):
         sys.modules.pop(_mod, None)
 
-    from request import AI_API, TOKEN_MULTIPLIER  # type: ignore
-    from pipeline import TOKEN_BUFFER, YANDEX_PRICE_PER_1K  # type: ignore
+    from request import AI_API, TOKEN_BUFFER  # type: ignore
 
     api = AI_API()
-    yandex_tokens = await api.estimate_tokens_from_text(
-        data.code, prompt_key=data.model_id
+    est = await api.estimate_charge(
+        data.code, prompt_key=data.model_id,
+        total_spent=getattr(data, "total_spent", 0),
     )
-    charged = max(1, (yandex_tokens // 100) * TOKEN_MULTIPLIER)
-    required = charged + TOKEN_BUFFER
-    cost_rub = yandex_tokens / 1000 * YANDEX_PRICE_PER_1K
+    required = est["charged"] + TOKEN_BUFFER
 
     return {
-        "estimated_yandex": yandex_tokens,
-        "estimated_charged": charged,
+        "estimated_yandex": est["yandex_tokens"],
+        "estimated_charged": est["charged"],
         "required_with_buffer": required,
-        "estimated_cost_rub": round(cost_rub, 2),
+        "estimated_cost_rub": round(est["cost_rub"], 4),
     }
 
 # Раздаём файлы из files/ по URL /files/...
@@ -277,6 +296,24 @@ class BanRequest(BaseModel):
 class AdminPasswordReset(BaseModel):
     new_password: str
 
+class AdminLoginRequest(BaseModel):
+    login: str
+    password: str
+
+
+# ── Admin credentials (must be set via environment) ──────────────────────────
+ADMIN_LOGIN = os.getenv("ADMIN_LOGIN")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
+if not ADMIN_LOGIN or not ADMIN_PASSWORD:
+    import warnings
+    warnings.warn("ADMIN_LOGIN / ADMIN_PASSWORD not set — admin panel disabled")
+# Active admin sessions: set of tokens
+_admin_sessions: set[str] = set()
+
+
+def _check_admin_token(token: str) -> bool:
+    return token in _admin_sessions
+
 
 #API SETTINGS
 
@@ -285,27 +322,42 @@ async def root():
     return {"status": "Koritsu API running"}
 
 
+INITIAL_FREE_TOKENS = 50  # бонусные токены при регистрации
+
+
 @app.post("/register")
 def register(data: RegisterRequest):
-    user_id = str(uuid.uuid4())
+    print(f"[register] username={data.username}")
+    if not _valid_username(data.username):
+        return {"error": "Username must be 3-32 characters (letters, digits, _ -)"}
+    if len(data.password) < 12:
+        return {"error": "Password must be at least 12 characters"}
 
-    password_hash = hashlib.sha256((data.password + user_id).encode()).hexdigest()
+    user_id = str(uuid.uuid4())
+    password_hash = bcrypt.hashpw(data.password.encode(), bcrypt.gensalt()).decode()
 
     conn = get_db()
     try:
         conn.execute(
-            "INSERT INTO users (uuid, username, password) VALUES (?, ?, ?)",
-            (user_id, data.username, password_hash)
+            "INSERT INTO users (uuid, username, password, tokens_left) VALUES (?, ?, ?, ?)",
+            (user_id, data.username, password_hash, INITIAL_FREE_TOKENS)
         )
         try:
             user_folder = f"files/users/{user_id}"
+            print(f"[register] creating folders: {os.path.abspath(user_folder)}")
             os.makedirs(f"{user_folder}/fragmos", exist_ok=True)
-            os.makedirs(f"{user_folder}/engrafo", exist_ok=True)
+            os.makedirs(f"{user_folder}/engrafo/templates", exist_ok=True)
+            os.makedirs(f"{user_folder}/engrafo/reports", exist_ok=True)
+            print(f"[register] folders created, generating icon...")
             icon_path = generate_icon(user_id, user_folder)
+            print(f"[register] icon saved: {icon_path}")
             conn.execute("UPDATE users SET icon = ? WHERE uuid = ?", (icon_path, user_id))
         except Exception as e:
+            print(f"[register] ERROR: {e}")
+            import traceback; traceback.print_exc()
             return {"error": f"Some internal error {e}"}
         conn.commit()
+        print(f"[register] SUCCESS: {user_id}")
     except sq.IntegrityError:
         return {"error": "Username already taken"}
     finally:
@@ -326,15 +378,15 @@ def login(data: LoginRequest):
     if row is None:
         return {"error": "User not found!"}
 
-    password_hash = hashlib.sha256((data.password + row["uuid"]).encode()).hexdigest()
-
-    if password_hash == row["password"]:
+    if bcrypt.checkpw(data.password.encode(), row["password"].encode()):
         return {"success": "Auth true", "uuid": row["uuid"]}
     else:
         return {"error": "Username or password is incorrect!"}
 
 @app.get("/user/{uuid}")
 def get_user_data(uuid: str):
+    if not _valid_uuid(uuid):
+        return {"error": "Invalid UUID"}
     conn = get_db()
     row = conn.execute("SELECT * FROM users WHERE uuid = ?", (uuid,)).fetchone()
     conn.close()
@@ -355,6 +407,8 @@ def get_user_data(uuid: str):
 
 @app.get("/user/{uuid}/{folder}")
 def get_user_folder_files(uuid: str, folder: str):
+    if not _valid_uuid(uuid):
+        return {"error": "Invalid UUID"}
     if folder not in ("fragmos", "engrafo"):
         return {"error": "Unable to get folder"}
     if folder == "engrafo":
@@ -370,6 +424,8 @@ def get_user_folder_files(uuid: str, folder: str):
 @app.post("/user/{uuid}/avatar")
 async def upload_avatar(uuid: str, file: UploadFile = File(...)):
     """Загрузка аватарки пользователя. Принимает только PNG."""
+    if not _valid_uuid(uuid):
+        return {"error": "Invalid UUID"}
     conn = get_db()
     row = conn.execute("SELECT uuid FROM users WHERE uuid = ?", (uuid,)).fetchone()
     conn.close()
@@ -378,14 +434,16 @@ async def upload_avatar(uuid: str, file: UploadFile = File(...)):
 
     # Проверяем формат — только PNG
     if file.content_type != "image/png" or not (file.filename or "").lower().endswith(".png"):
-        # Делаем вид что всё хорошо, но ничего не сохраняем
-        return {"success": "Avatar updated"}
+        return {"error": "Only PNG files are allowed"}
+
+    contents = await file.read()
+    if len(contents) > MAX_AVATAR_SIZE:
+        return {"error": "File too large (max 2MB)"}
 
     user_folder = f"files/users/{uuid}"
     os.makedirs(user_folder, exist_ok=True)
     icon_path = os.path.join(user_folder, "icon.png")
 
-    contents = await file.read()
     with open(icon_path, "wb") as f:
         f.write(contents)
 
@@ -399,6 +457,8 @@ async def upload_avatar(uuid: str, file: UploadFile = File(...)):
 
 @app.patch("/user/{uuid}")
 def update_item(uuid: str, data: Update):
+    if not _valid_uuid(uuid):
+        return {"error": "Invalid UUID"}
     conn = get_db()
     row = conn.execute("SELECT * FROM users WHERE uuid = ?", (uuid,)).fetchone()
 
@@ -408,6 +468,9 @@ def update_item(uuid: str, data: Update):
 
     match data.item:
         case "username":
+            if not _valid_username(data.newitem):
+                conn.close()
+                return {"error": "Username must be 3-32 characters (letters, digits, _ -)"}
             taken = conn.execute("SELECT uuid FROM users WHERE username = ?", (data.newitem,)).fetchone()
             if taken is not None:
                 conn.close()
@@ -419,11 +482,10 @@ def update_item(uuid: str, data: Update):
 
         case "password":
             # проверяем старый пароль
-            old_hash = hashlib.sha256((data.olditem + row["uuid"]).encode()).hexdigest()
-            if old_hash != row["password"]:
+            if not bcrypt.checkpw(data.olditem.encode(), row["password"].encode()):
                 conn.close()
                 return {"error": "Old password is incorrect"}
-            new_hash = hashlib.sha256((data.newitem + row["uuid"]).encode()).hexdigest()
+            new_hash = bcrypt.hashpw(data.newitem.encode(), bcrypt.gensalt()).decode()
             conn.execute("UPDATE users SET password = ? WHERE uuid = ?", (new_hash, uuid))
             conn.commit()
             conn.close()
@@ -434,17 +496,6 @@ def update_item(uuid: str, data: Update):
             conn.commit()
             conn.close()
             return {"success": f"Display name changed to {data.newitem}"}
-
-        case "icon":
-            # newitem = имя файла иконки (файл уже должен быть загружен отдельно)
-            icon_path = f"files/users/{uuid}/{data.newitem}"
-            if not os.path.exists(icon_path):
-                conn.close()
-                return {"error": "Icon file not found"}
-            conn.execute("UPDATE users SET icon = ? WHERE uuid = ?", (icon_path, uuid))
-            conn.commit()
-            conn.close()
-            return {"success": "Icon updated"}
 
         case "tokens_left":
             if data.olditem == "minus":
@@ -473,11 +524,42 @@ def update_item(uuid: str, data: Update):
             return {"error": f"Unknown field: {data.item}"}
 
 
+# ── Admin auth ────────────────────────────────────────────────────────────────
+
+@app.post("/admin/login")
+def admin_login(data: AdminLoginRequest):
+    """Authenticate as admin. Returns a session token."""
+    if not ADMIN_LOGIN or not ADMIN_PASSWORD:
+        return {"error": "Admin panel is disabled (credentials not configured)"}
+    if data.login == ADMIN_LOGIN and data.password == ADMIN_PASSWORD:
+        import secrets
+        token = secrets.token_hex(32)
+        _admin_sessions.add(token)
+        return {"success": True, "token": token}
+    return {"error": "Invalid credentials"}
+
+
+@app.post("/admin/verify")
+def admin_verify(token: str = ""):
+    """Check if admin token is valid."""
+    if _check_admin_token(token):
+        return {"valid": True}
+    return {"valid": False}
+
+
+def _require_admin(request) -> bool:
+    """Check admin token from X-Admin-Token header."""
+    token = request.headers.get("x-admin-token", "")
+    return _check_admin_token(token)
+
+
 # ── Admin endpoints ───────────────────────────────────────────────────────────
 
 @app.get("/admin/health")
-def admin_health():
+def admin_health(request: Request):
     """Check DB connectivity."""
+    if not _require_admin(request):
+        return {"error": "Unauthorized"}
     try:
         conn = get_db()
         conn.execute("SELECT 1").fetchone()
@@ -487,8 +569,10 @@ def admin_health():
         return {"status": "error", "detail": str(e)}
 
 @app.get("/admin/search")
-def admin_search_user(username: str = ""):
+def admin_search_user(request: Request, username: str = ""):
     """Search user by username (partial match)."""
+    if not _require_admin(request):
+        return {"error": "Unauthorized"}
     if not username.strip():
         return {"error": "Username query is empty"}
     conn = get_db()
@@ -501,8 +585,10 @@ def admin_search_user(username: str = ""):
 
 
 @app.post("/admin/user/{uuid}/ban")
-def admin_ban_user(uuid: str, data: BanRequest):
+def admin_ban_user(uuid: str, data: BanRequest, request: Request):
     """Ban or timeout a user."""
+    if not _require_admin(request):
+        return {"error": "Unauthorized"}
     conn = get_db()
     row = conn.execute("SELECT uuid FROM users WHERE uuid = ?", (uuid,)).fetchone()
     if row is None:
@@ -524,8 +610,10 @@ def admin_ban_user(uuid: str, data: BanRequest):
 
 
 @app.post("/admin/user/{uuid}/unban")
-def admin_unban_user(uuid: str):
+def admin_unban_user(uuid: str, request: Request):
     """Unban a user."""
+    if not _require_admin(request):
+        return {"error": "Unauthorized"}
     conn = get_db()
     row = conn.execute("SELECT uuid FROM users WHERE uuid = ?", (uuid,)).fetchone()
     if row is None:
@@ -538,8 +626,10 @@ def admin_unban_user(uuid: str):
 
 
 @app.delete("/admin/user/{uuid}")
-def admin_delete_user(uuid: str):
+def admin_delete_user(uuid: str, request: Request):
     """Delete a user and their files."""
+    if not _require_admin(request):
+        return {"error": "Unauthorized"}
     conn = get_db()
     row = conn.execute("SELECT uuid FROM users WHERE uuid = ?", (uuid,)).fetchone()
     if row is None:
@@ -558,14 +648,16 @@ def admin_delete_user(uuid: str):
 
 
 @app.post("/admin/user/{uuid}/reset-password")
-def admin_reset_password(uuid: str, data: AdminPasswordReset):
+def admin_reset_password(uuid: str, data: AdminPasswordReset, request: Request):
     """Admin force-reset password (no old password needed)."""
+    if not _require_admin(request):
+        return {"error": "Unauthorized"}
     conn = get_db()
     row = conn.execute("SELECT uuid FROM users WHERE uuid = ?", (uuid,)).fetchone()
     if row is None:
         conn.close()
         return {"error": "User not exist"}
-    new_hash = hashlib.sha256((data.new_password + uuid).encode()).hexdigest()
+    new_hash = bcrypt.hashpw(data.new_password.encode(), bcrypt.gensalt()).decode()
     conn.execute("UPDATE users SET password = ? WHERE uuid = ?", (new_hash, uuid))
     conn.commit()
     conn.close()
@@ -573,8 +665,10 @@ def admin_reset_password(uuid: str, data: AdminPasswordReset):
 
 
 @app.patch("/admin/user/{uuid}/sub-level")
-def admin_update_sub_level(uuid: str, data: Update):
+def admin_update_sub_level(uuid: str, data: Update, request: Request):
     """Admin update subscription level."""
+    if not _require_admin(request):
+        return {"error": "Unauthorized"}
     conn = get_db()
     row = conn.execute("SELECT uuid FROM users WHERE uuid = ?", (uuid,)).fetchone()
     if row is None:
@@ -638,25 +732,32 @@ def get_referral(uuid: str):
 @app.post("/register/ref/{ref_uuid}")
 def register_with_referral(ref_uuid: str, data: RegisterRequest):
     """Регистрация по реферальной ссылке — увеличивает счётчик рефералов."""
-    conn = get_db()
+    if not _valid_username(data.username):
+        return {"error": "Username must be 3-32 characters (letters, digits, _ -)"}
+    if len(data.password) < 12:
+        return {"error": "Password must be at least 12 characters"}
+    if not _valid_uuid(ref_uuid):
+        return {"error": "Invalid referral code"}
 
+    conn = get_db()
     ref_row = conn.execute("SELECT * FROM referrals WHERE ref_uuid = ?", (ref_uuid,)).fetchone()
     if ref_row is None:
         conn.close()
         return {"error": "Referral code not found"}
 
     user_id = str(uuid.uuid4())
-    password_hash = hashlib.sha256((data.password + user_id).encode()).hexdigest()
+    password_hash = bcrypt.hashpw(data.password.encode(), bcrypt.gensalt()).decode()
 
     try:
         conn.execute(
-            "INSERT INTO users (uuid, username, password, referred_by) VALUES (?, ?, ?, ?)",
-            (user_id, data.username, password_hash, ref_uuid)
+            "INSERT INTO users (uuid, username, password, referred_by, tokens_left) VALUES (?, ?, ?, ?, ?)",
+            (user_id, data.username, password_hash, ref_uuid, INITIAL_FREE_TOKENS)
         )
         try:
             user_folder = f"files/users/{user_id}"
             os.makedirs(f"{user_folder}/fragmos", exist_ok=True)
-            os.makedirs(f"{user_folder}/engrafo", exist_ok=True)
+            os.makedirs(f"{user_folder}/engrafo/templates", exist_ok=True)
+            os.makedirs(f"{user_folder}/engrafo/reports", exist_ok=True)
             icon_path = generate_icon(user_id, user_folder)
             conn.execute("UPDATE users SET icon = ? WHERE uuid = ?", (icon_path, user_id))
         except Exception as e:
@@ -691,7 +792,7 @@ def get_referral_details(uuid: str):
         return {"referrals": []}
 
     referred = conn.execute(
-        "SELECT username, created_at FROM users WHERE referred_by = ? ORDER BY created_at DESC",
+        "SELECT uuid, username, created_at FROM users WHERE referred_by = ? ORDER BY created_at DESC",
         (ref_row["ref_uuid"],)
     ).fetchall()
     conn.close()
@@ -701,6 +802,7 @@ def get_referral_details(uuid: str):
         date_str = (r["created_at"] or "")[:10]
         result.append({
             "name": r["username"],
+            "uuid": r["uuid"],
             "earnings": "0 бонусов",
             "date": date_str,
             "status": "active",

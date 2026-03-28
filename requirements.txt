@@ -1,9 +1,11 @@
+bcrypt
 colorama
 docxtpl
-docx
-docxtpl
+python-docx
 drawpyo
 openai
 reflex
 fastapi
-dotenv
+python-dotenv
+httpx
+Pillow

@@ -1,9 +1,10 @@
+import os
 import re
 import time
 import reflex as rx
 import httpx
 
-API_URL = "http://localhost:8001"
+API_URL = os.getenv("FASTAPI_URL", "http://localhost:8001")
 
 
 class AuthState(rx.State):

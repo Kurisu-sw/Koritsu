@@ -1,9 +1,11 @@
 """State for admin panel — user management, topology health checks."""
 
+import os
 import reflex as rx
 import httpx
 
-API = "http://localhost:8001"
+API = os.getenv("FASTAPI_URL", "http://localhost:8001")
+REFLEX_URL = os.getenv("REFLEX_URL", "http://localhost:3000")
 
 
 class AdminState(rx.State):
@@ -399,7 +401,7 @@ class AdminState(rx.State):
         try:
             t0 = time.monotonic()
             async with httpx.AsyncClient() as client:
-                resp = await client.get("http://localhost:3000", timeout=3)
+                resp = await client.get(REFLEX_URL, timeout=3)
             latency = int((time.monotonic() - t0) * 1000)
             if resp.status_code == 200:
                 self.topo_reflex_status = "online"

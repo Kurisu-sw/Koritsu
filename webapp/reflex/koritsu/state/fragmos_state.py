@@ -13,7 +13,7 @@ _STATE_DIR   = os.path.dirname(os.path.abspath(__file__))
 SCHEMES_DIR  = os.path.normpath(os.path.join(_STATE_DIR, "../../server/files/users"))
 BUG_DIR      = os.path.normpath(os.path.join(_STATE_DIR, "../../../db/bug_reports"))
 
-API_URL = "http://localhost:8001"
+API_URL = os.getenv("FASTAPI_URL", "http://localhost:8001")
 # ── Models ────────────────────────────────────────────────────────────────────
 MODELS: dict[str, str] = {
     "Bauman 19.701": "literal",

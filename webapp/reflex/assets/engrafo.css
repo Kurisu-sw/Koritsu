@@ -1,0 +1,193 @@
+.hide-scrollbar {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge */
+}
+.hide-scrollbar::-webkit-scrollbar {
+  display: none; /* Chrome/Safari */
+}
+
+/* ── Apple-style tag field ──────────────────────────────────────── */
+
+.tag-field-apple {
+  background: rgba(255,255,255,0.035);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 14px;
+  transition: all 0.25s cubic-bezier(0.4,0,0.2,1);
+  overflow: hidden;
+}
+.tag-field-apple:hover {
+  background: rgba(255,255,255,0.05);
+  border-color: rgba(255,255,255,0.10);
+}
+.tag-field-apple:focus-within {
+  background: rgba(255,255,255,0.055);
+  border-color: rgba(34,242,239,0.40);
+  box-shadow: 0 0 0 3px rgba(34,242,239,0.08), 0 2px 8px rgba(0,0,0,0.15);
+}
+
+/* Toolbar placeholder row */
+.tag-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  min-height: 32px;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+.tag-field-apple:focus-within .tag-toolbar {
+  opacity: 1;
+}
+.tag-toolbar-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  border: none;
+  background: transparent;
+  color: rgba(232,234,240,0.35);
+  cursor: not-allowed;
+  transition: all 0.15s ease;
+  font-size: 13px;
+  font-weight: 600;
+}
+.tag-toolbar-btn:hover {
+  background: rgba(255,255,255,0.05);
+  color: rgba(232,234,240,0.50);
+}
+.tag-toolbar-sep {
+  width: 1px;
+  height: 16px;
+  background: rgba(255,255,255,0.06);
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+
+/* Image thumbnail in tag field */
+.tag-image-thumb {
+  max-width: 120px;
+  max-height: 80px;
+  border-radius: 8px;
+  object-fit: cover;
+  border: 1px solid rgba(255,255,255,0.08);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.tag-image-thumb:hover {
+  border-color: rgba(201,35,248,0.40);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.30);
+  transform: scale(1.03);
+}
+
+/* ── Responsive layout ──────────────────────────────────────────── */
+
+/* Editor main hstack */
+.engrafo-editor-layout {
+  display: flex !important;
+  flex-wrap: nowrap !important;
+  gap: 12px;
+  width: 100%;
+  height: calc(100vh - 80px);
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Sidebar */
+.engrafo-sidebar {
+  width: 260px;
+  min-width: 200px;
+  max-width: 40%;
+  flex-shrink: 0;
+  height: 100%;
+  overflow-y: auto;
+}
+
+/* Tags panel */
+.engrafo-tags {
+  flex: 1 1 0%;
+  min-width: 220px;
+  height: 100%;
+  overflow-y: auto;
+}
+
+/* Preview panel */
+.engrafo-preview {
+  width: 400px;
+  min-width: 180px;
+  max-width: 60%;
+  flex-shrink: 1;
+  height: 100%;
+}
+
+/* ── Breakpoint: < 1200px — shrink sidebar ──────────────────────── */
+@media (max-width: 1200px) {
+  .engrafo-sidebar {
+    width: 220px;
+    min-width: 180px;
+  }
+  .engrafo-preview {
+    width: 320px;
+    min-width: 180px;
+  }
+}
+
+/* ── Breakpoint: < 960px — hide sidebar, stack preview below ────── */
+@media (max-width: 960px) {
+  .engrafo-editor-layout {
+    flex-wrap: wrap !important;
+    height: auto !important;
+    min-height: calc(100vh - 80px);
+  }
+  .engrafo-sidebar {
+    width: 100% !important;
+    min-width: 0 !important;
+    height: auto !important;
+    max-height: 240px;
+    overflow-y: auto;
+  }
+  .engrafo-sidebar > div {
+    flex-direction: row !important;
+    flex-wrap: wrap !important;
+    gap: 8px !important;
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+  .engrafo-sidebar > div > * {
+    flex: 1 1 auto !important;
+    min-width: 200px !important;
+    width: auto !important;
+    min-height: 0 !important;
+  }
+  .engrafo-tags {
+    width: 100% !important;
+    flex: 1 1 auto !important;
+    min-height: 300px;
+    height: auto !important;
+  }
+  #engrafo-resize-divider {
+    display: none !important;
+  }
+  .engrafo-preview {
+    width: 100% !important;
+    min-width: 0 !important;
+    height: 500px !important;
+    flex-shrink: 0 !important;
+  }
+}
+
+/* ── Breakpoint: < 640px — compact everything ───────────────────── */
+@media (max-width: 640px) {
+  .engrafo-sidebar {
+    max-height: 180px;
+  }
+  .engrafo-preview {
+    height: 400px !important;
+  }
+  .engrafo-editor-outer {
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+  }
+}

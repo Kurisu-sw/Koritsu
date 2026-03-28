@@ -1,10 +1,12 @@
+import asyncio
+import os
 import re
 import reflex as rx
 import httpx
 from pydantic import BaseModel
 from koritsu.state.auth_state import AuthState
 
-API_URL = "http://localhost:8001"
+API_URL = os.getenv("FASTAPI_URL", "http://localhost:8001")
 
 
 class FileData(BaseModel):
@@ -356,7 +358,7 @@ class ProfileState(rx.State):
         yield rx.set_clipboard(self.referral_link)
         self.copied = True
         yield
-        await rx.sleep(2)
+        await asyncio.sleep(2)
         self.copied = False
 
     async def connect_referral_program(self):
