@@ -7,24 +7,11 @@ from koritsu.components.header import header
 from koritsu.state.engrafo_state import EngrafoState
 from koritsu.theme import (
     BG, PANEL, HOVER, BORDER, ACCENT, ACCENT2, TEXT, MUTED,
-    SUCCESS, WARNING, ERROR,
+    SUCCESS, WARNING, ERROR, SANS, BTN_GRADIENT,
 )
-
-SANS = "-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',system-ui,sans-serif"
-MONO = "'SF Mono','Fira Code','Cascadia Code',monospace"
 
 
 # ── Building blocks ────────────────────────────────────────────────────────────
-
-def _badge(label: str, color: str) -> rx.Component:
-    return rx.box(
-        rx.text(label, font_size="11px", font_weight="600",
-                font_family=SANS, color=color),
-        padding="2px 8px",
-        border_radius="6px",
-        background=f"{color}22",
-        border=f"1px solid {color}44",
-    )
 
 
 def _report_card(report: dict) -> rx.Component:
@@ -40,7 +27,7 @@ def _report_card(report: dict) -> rx.Component:
     )
 
     return rx.box(
-        rx.hstack(
+        rx.box(
             rx.vstack(
                 rx.hstack(
                     rx.icon("file-text", size=16, color=ACCENT),
@@ -53,11 +40,10 @@ def _report_card(report: dict) -> rx.Component:
                     rx.text(tpl_name, font_size="12px", color=TEXT, font_family=SANS),
                     rx.text("·", color=MUTED, font_size="12px"),
                     rx.text(date_str, font_size="12px", color=MUTED, font_family=SANS),
-                    spacing="1", align="center",
+                    spacing="1", align="center", flex_wrap="wrap",
                 ),
-                spacing="1", align="start",
+                spacing="1", align="start", flex="1",
             ),
-            rx.spacer(),
             rx.hstack(
                 rx.button(
                     rx.hstack(
@@ -66,7 +52,7 @@ def _report_card(report: dict) -> rx.Component:
                         spacing="1", align="center",
                     ),
                     on_click=EngrafoState.open_report(rid),
-                    background=f"linear-gradient(135deg,{ACCENT},#2563eb)",
+                    background=BTN_GRADIENT,
                     color="white",
                     border="none",
                     border_radius="8px",
@@ -76,7 +62,7 @@ def _report_card(report: dict) -> rx.Component:
                 ),
                 rx.button(
                     rx.icon("trash-2", size=14, color=ERROR),
-                    on_click=EngrafoState.delete_report(rid),
+                    on_click=EngrafoState.confirm_delete(rid),
                     background="transparent",
                     border=f"1px solid {BORDER}",
                     border_radius="8px",
@@ -84,9 +70,12 @@ def _report_card(report: dict) -> rx.Component:
                     cursor="pointer",
                     _hover={"background": f"{ERROR}22", "border_color": ERROR},
                 ),
-                spacing="2",
+                spacing="2", flex_shrink="0",
             ),
-            align="center",
+            display="flex",
+            flex_direction=["column", "row"],
+            align_items=["start", "center"],
+            gap="12px",
             width="100%",
         ),
         background=PANEL,
@@ -214,7 +203,7 @@ def _new_report_dialog() -> rx.Component:
                             spacing="1", align="center",
                         ),
                         on_click=EngrafoState.create_report,
-                        background=f"linear-gradient(135deg,{ACCENT},#2563eb)",
+                        background=BTN_GRADIENT,
                         color="white",
                         border="none",
                         border_radius="10px",
@@ -374,12 +363,12 @@ def _upload_dialog() -> rx.Component:
                         ),
                         on_click=EngrafoState.upload_template(rx.upload_files("template_upload")),  # type: ignore
                         background=rx.cond(file_selected,
-                                           f"linear-gradient(135deg,{ACCENT},#2563eb)",
+                                           BTN_GRADIENT,
                                            "rgba(255,255,255,0.1)"),
                         color="white",
                         border="none",
                         cursor="pointer",
-                        disabled=EngrafoState.loading,
+                        disabled=EngrafoState.loading | ~file_selected,
                     ),
                     spacing="2", justify="end", width="100%",
                 ),
@@ -397,13 +386,83 @@ def _upload_dialog() -> rx.Component:
     )
 
 
+def _delete_confirm_dialog() -> rx.Component:
+    """Диалог подтверждения удаления отчёта."""
+    return rx.dialog.root(
+        rx.dialog.content(
+            rx.vstack(
+                rx.hstack(
+                    rx.icon("triangle-alert", size=20, color=ERROR),
+                    rx.dialog.title(
+                        "Удалить отчёт?",
+                        font_size="17px", font_weight="700",
+                        font_family=SANS, color=TEXT,
+                    ),
+                    spacing="2", align="center",
+                ),
+                rx.text(
+                    "Это действие необратимо. Отчёт и все его данные будут удалены.",
+                    font_size="13px", color=MUTED, font_family=SANS,
+                ),
+                rx.hstack(
+                    rx.dialog.close(
+                        rx.button(
+                            "Отмена",
+                            on_click=EngrafoState.cancel_delete,
+                            background="transparent",
+                            border=f"1px solid {BORDER}",
+                            border_radius="10px",
+                            color=TEXT,
+                            font_family=SANS,
+                            font_size="14px",
+                            padding="8px 20px",
+                            cursor="pointer",
+                            _hover={"background": HOVER},
+                        ),
+                    ),
+                    rx.button(
+                        rx.hstack(
+                            rx.icon("trash-2", size=14),
+                            rx.text("Да, удалить", font_size="14px", font_family=SANS),
+                            spacing="1", align="center",
+                        ),
+                        on_click=EngrafoState.do_delete,
+                        background=ERROR,
+                        color="white",
+                        border="none",
+                        border_radius="10px",
+                        padding="8px 20px",
+                        cursor="pointer",
+                        _hover={"opacity": "0.85"},
+                    ),
+                    spacing="2", justify="end", width="100%",
+                ),
+                spacing="4", width="100%",
+            ),
+            background="rgba(10,10,20,0.97)",
+            border=f"1px solid {BORDER}",
+            border_radius="18px",
+            padding="28px",
+            max_width="420px",
+            width="90vw",
+            backdrop_filter="blur(20px)",
+        ),
+        open=EngrafoState.show_delete_confirm,
+    )
+
+
 # ── Main page ──────────────────────────────────────────────────────────────────
 
 def engrafo_page() -> rx.Component:
     return rx.box(
+        rx.el.link(
+            rel="stylesheet",
+            href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap",
+        ),
         header(),
         _new_report_dialog(),
         _upload_dialog(),
+        _delete_confirm_dialog(),
 
         # ── Content ──
         rx.box(
@@ -460,7 +519,7 @@ def engrafo_page() -> rx.Component:
                                 spacing="1", align="center",
                             ),
                             on_click=EngrafoState.open_new_report_dialog,
-                            background=f"linear-gradient(135deg,{ACCENT},#2563eb)",
+                            background=BTN_GRADIENT,
                             color="white",
                             border="none",
                             border_radius="10px",
@@ -468,10 +527,12 @@ def engrafo_page() -> rx.Component:
                             cursor="pointer",
                             _hover={"opacity": "0.85"},
                         ),
-                        spacing="2",
+                        spacing="2", flex_wrap="wrap",
                     ),
                     align="center",
                     width="100%",
+                    flex_wrap="wrap",
+                    gap="8px",
                 ),
 
                 # Success/error banner
@@ -499,7 +560,7 @@ def engrafo_page() -> rx.Component:
                     EngrafoState.has_reports,
                     rx.vstack(
                         rx.text(
-                            f"Отчёты",
+                            "Отчёты",
                             font_size="13px", color=MUTED, font_weight="500",
                             font_family=SANS, letter_spacing="0.5px",
                             text_transform="uppercase",
@@ -525,7 +586,7 @@ def engrafo_page() -> rx.Component:
                                     spacing="1", align="center",
                                 ),
                                 on_click=EngrafoState.open_new_report_dialog,
-                                background=f"linear-gradient(135deg,{ACCENT},#2563eb)",
+                                background=BTN_GRADIENT,
                                 color="white",
                                 border="none",
                                 border_radius="10px",
@@ -553,7 +614,7 @@ def engrafo_page() -> rx.Component:
                 align="start",
             ),
             padding_top="88px",
-            padding_x="32px",
+            padding_x=["16px", "24px", "32px"],
             padding_bottom="48px",
             width="100%",
             display="flex",

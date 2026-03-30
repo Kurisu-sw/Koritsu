@@ -16,23 +16,17 @@ Images  — кнопка выбора файла → base64 в значение 
 import reflex as rx
 from koritsu.components.header import header
 from koritsu.state.engrafo_state import EngrafoState
+from koritsu.theme import (
+    E_BG as C_BG, E_CARD as C_CARD, E_CARD2 as C_CARD2,
+    E_BORDER as C_BORDER, E_GREEN as C_GREEN, E_PURPLE as C_PURPLE,
+    E_PURPLE_DARK as C_PURPLE_DARK, E_CYAN as C_CYAN, E_TEXT as C_TEXT,
+    E_MUTED as C_MUTED, E_MUTED2 as C_MUTED2, E_ERROR as C_ERROR,
+    E_DIALOG as C_DIALOG,
+)
 
-SANS = "'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif"
+SANS = "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif"
 MONO = "'SF Mono','Fira Code','Cascadia Code',monospace"
 # Layout widths now controlled via CSS classes (engrafo.css) for responsiveness
-
-C_BG      = "#060C0C"
-C_CARD    = "#0D1117"
-C_CARD2   = "#111823"
-C_BORDER  = "rgba(255,255,255,0.07)"
-C_GREEN   = "#49DC7A"
-C_PURPLE  = "#C923F8"
-C_CYAN    = "#22F2EF"
-C_TEXT    = "#E8EAF0"
-C_MUTED   = "rgba(232,234,240,0.50)"
-C_MUTED2  = "rgba(232,234,240,0.25)"
-C_SUCCESS = "#49DC7A"
-C_ERROR   = "#FF4D6A"
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -113,10 +107,6 @@ def _tag_chip(entry: dict) -> rx.Component:
     )
 
 
-def _is_image_value(value) -> rx.Var:
-    """Check if tag value is a base64 image data URL."""
-    return value.startswith("data:image")
-
 
 def _tag_toolbar() -> rx.Component:
     """Toolbar placeholder — future: rich-text formatting buttons."""
@@ -124,21 +114,25 @@ def _tag_toolbar() -> rx.Component:
         # Bold
         rx.el.button("B", class_name="tag-toolbar-btn",
                       title="Жирный (скоро)",
-                      style={"font_weight": "800"}),
+                      disabled=True,
+                      style={"font_weight": "800", "opacity": "0.35", "cursor": "not-allowed"}),
         # Italic
         rx.el.button("I", class_name="tag-toolbar-btn",
                       title="Курсив (скоро)",
-                      style={"font_style": "italic"}),
+                      disabled=True,
+                      style={"font_style": "italic", "opacity": "0.35", "cursor": "not-allowed"}),
         # Underline
         rx.el.button("U", class_name="tag-toolbar-btn",
                       title="Подчёркнутый (скоро)",
-                      style={"text_decoration": "underline"}),
+                      disabled=True,
+                      style={"text_decoration": "underline", "opacity": "0.35", "cursor": "not-allowed"}),
         # Separator
         rx.el.div(class_name="tag-toolbar-sep"),
         # Font picker placeholder
         rx.el.button("A", class_name="tag-toolbar-btn",
                       title="Шрифт (скоро)",
-                      style={"font_size": "14px"}),
+                      disabled=True,
+                      style={"font_size": "14px", "opacity": "0.35", "cursor": "not-allowed"}),
         # Separator
         rx.el.div(class_name="tag-toolbar-sep"),
         # Image button (functional)
@@ -146,19 +140,235 @@ def _tag_toolbar() -> rx.Component:
     )
 
 
+# ── Context file upload dialog ─────────────────────────────────────────────
+
+def _context_upload_dialog() -> rx.Component:
+    """Диалог загрузки файлов контекста (PDF, PNG, ZIP и др.)."""
+    file_selected = rx.selected_files("context_upload").length() > 0
+
+    def _file_row(f: dict) -> rx.Component:
+        return rx.hstack(
+            rx.box(
+                rx.text(
+                    f["ext"].upper().replace(".", ""),
+                    font_size="9px", font_weight="700",
+                    color=C_CYAN, font_family=SANS,
+                ),
+                background="rgba(34,242,239,0.10)",
+                border="1px solid rgba(34,242,239,0.20)",
+                border_radius="5px", padding="2px 5px",
+                flex_shrink="0",
+            ),
+            rx.text(f["name"], font_size="12px", color=C_TEXT,
+                    font_family=SANS, flex="1", no_of_lines=1),
+            rx.text(f["size"], font_size="11px", color=C_MUTED2,
+                    font_family=SANS, flex_shrink="0"),
+            rx.box(
+                rx.icon("x", size=11, color=C_ERROR),
+                on_click=EngrafoState.delete_context_file(f["name"]),
+                cursor="pointer", border_radius="5px", padding="3px",
+                _hover={"background": "rgba(255,77,106,0.12)"},
+                display="flex", align_items="center", flex_shrink="0",
+            ),
+            spacing="2", align="center", width="100%",
+            padding="6px 10px",
+            background="rgba(255,255,255,0.03)",
+            border=f"1px solid {C_BORDER}",
+            border_radius="8px",
+        )
+
+    return rx.dialog.root(
+        rx.dialog.content(
+            rx.vstack(
+                # Header
+                rx.hstack(
+                    rx.box(
+                        rx.icon("folder-open", size=18, color=C_CYAN),
+                        background="rgba(34,242,239,0.10)",
+                        border_radius="10px", padding="8px",
+                        display="flex", align_items="center",
+                    ),
+                    rx.vstack(
+                        rx.dialog.title(
+                            "Файлы контекста",
+                            font_size="16px", font_weight="700",
+                            font_family=SANS, color=C_TEXT, margin="0",
+                        ),
+                        rx.text("PDF, PNG, ZIP, DOCX — источники для заполнения тегов",
+                                font_size="11px", color=C_MUTED, font_family=SANS),
+                        spacing="0", align="start",
+                    ),
+                    rx.spacer(),
+                    rx.dialog.close(
+                        rx.icon("x", size=16, color=C_MUTED, cursor="pointer"),
+                        on_click=EngrafoState.close_context_upload,
+                    ),
+                    spacing="3", align="center", width="100%",
+                ),
+
+                # Upload zone
+                rx.upload(
+                    rx.vstack(
+                        rx.cond(
+                            EngrafoState.loading,
+                            rx.vstack(
+                                rx.spinner(size="3", color=C_CYAN),
+                                rx.text("Загружаю...", font_size="13px",
+                                        color=C_CYAN, font_family=SANS),
+                                spacing="3", align="center",
+                            ),
+                            rx.cond(
+                                file_selected,
+                                rx.vstack(
+                                    rx.icon("file-check", size=32, color=C_CYAN),
+                                    rx.text(rx.selected_files("context_upload")[0],
+                                            font_size="12px", color=C_CYAN,
+                                            font_family=SANS, text_align="center",
+                                            max_width="300px", no_of_lines=1),
+                                    rx.text("Можно добавить ещё файлы",
+                                            font_size="10px", color=C_MUTED2, font_family=SANS),
+                                    spacing="2", align="center",
+                                ),
+                                rx.vstack(
+                                    rx.icon("upload-cloud", size=36, color=C_MUTED2),
+                                    rx.text("Перетащите файлы или нажмите",
+                                            font_size="13px", color=C_MUTED, font_family=SANS),
+                                    rx.text("PDF · PNG · JPG · ZIP · DOCX · TXT  (макс. 20 MB)",
+                                            font_size="11px", color=C_MUTED2, font_family=SANS),
+                                    spacing="2", align="center",
+                                ),
+                            ),
+                        ),
+                        align="center", justify="center",
+                        width="100%", min_height="120px",
+                    ),
+                    id="context_upload",
+                    accept={
+                        ".pdf":  ["application/pdf"],
+                        ".png":  ["image/png"],
+                        ".jpg":  ["image/jpeg"],
+                        ".jpeg": ["image/jpeg"],
+                        ".webp": ["image/webp"],
+                        ".zip":  ["application/zip"],
+                        ".docx": ["application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+                        ".txt":  ["text/plain"],
+                    },
+                    multiple=True,
+                    border=rx.cond(
+                        file_selected,
+                        f"2px dashed {C_CYAN}",
+                        f"2px dashed {C_BORDER}",
+                    ),
+                    border_radius="12px",
+                    background=rx.cond(
+                        file_selected, "rgba(34,242,239,0.05)", "transparent",
+                    ),
+                    padding="20px", width="100%",
+                    cursor=rx.cond(EngrafoState.loading, "default", "pointer"),
+                    transition="all 0.2s",
+                    _hover=rx.cond(
+                        EngrafoState.loading, {},
+                        {"border_color": C_CYAN, "background": "rgba(34,242,239,0.05)"},
+                    ),
+                ),
+
+                # Existing files
+                rx.cond(
+                    EngrafoState.context_files.length() > 0,
+                    rx.vstack(
+                        rx.text("Загруженные файлы", font_size="10px",
+                                font_weight="600", color=C_MUTED,
+                                font_family=SANS, letter_spacing="0.8px",
+                                text_transform="uppercase"),
+                        rx.vstack(
+                            rx.foreach(EngrafoState.context_files, _file_row),
+                            spacing="1", width="100%",
+                        ),
+                        spacing="2", width="100%",
+                    ),
+                ),
+
+                # Error banner
+                rx.cond(
+                    EngrafoState.error_msg != "",
+                    rx.box(
+                        rx.text(EngrafoState.error_msg, font_size="12px",
+                                color=C_ERROR, font_family=SANS),
+                        padding="8px 12px",
+                        background="rgba(255,77,106,0.10)",
+                        border="1px solid rgba(255,77,106,0.25)",
+                        border_radius="8px", width="100%",
+                    ),
+                ),
+
+                # Buttons
+                rx.hstack(
+                    rx.dialog.close(
+                        rx.button(
+                            "Закрыть",
+                            on_click=EngrafoState.close_context_upload,
+                            background="transparent",
+                            border=f"1px solid {C_BORDER}",
+                            border_radius="10px", color=C_MUTED,
+                            font_family=SANS, padding="7px 18px",
+                            cursor="pointer",
+                            _hover={"background": "rgba(255,255,255,0.06)"},
+                        ),
+                    ),
+                    rx.button(
+                        rx.cond(
+                            EngrafoState.loading,
+                            rx.hstack(rx.spinner(size="2"),
+                                      rx.text("Загружаю...", font_family=SANS),
+                                      spacing="2", align="center"),
+                            rx.hstack(rx.icon("upload", size=14),
+                                      rx.text("Загрузить", font_family=SANS),
+                                      spacing="2", align="center"),
+                        ),
+                        on_click=EngrafoState.upload_context_files(
+                            rx.upload_files(upload_id="context_upload")  # type: ignore
+                        ),
+                        background=rx.cond(
+                            file_selected,
+                            f"linear-gradient(135deg, {C_CYAN}, #0FA3A0)",
+                            "rgba(255,255,255,0.07)",
+                        ),
+                        color=rx.cond(file_selected, "#040A0A", C_MUTED),
+                        border="none", border_radius="10px",
+                        font_family=SANS, font_weight="600",
+                        padding="7px 20px", cursor="pointer",
+                        disabled=EngrafoState.loading | ~file_selected,
+                        _hover=rx.cond(file_selected, {"opacity": "0.88"}, {}),
+                    ),
+                    spacing="2", justify="end", width="100%",
+                ),
+
+                spacing="4", width="100%",
+            ),
+            background=C_CARD,
+            border=f"1px solid {C_BORDER}",
+            border_radius="20px",
+            padding="24px",
+            max_width="500px",
+            width="92vw",
+            backdrop_filter="blur(20px)",
+        ),
+        open=EngrafoState.show_context_upload,
+    )
+
+
 def _tag_field(entry: dict) -> rx.Component:
     """
-    Поле тега — Apple-style card.
-    Clean background, subtle borders, toolbar placeholder for future rich-text.
-    Image values shown as thumbnail.
+    Tag editor — native textarea для текста + миниатюра картинки.
+    Textarea нативная (rx.el.textarea) — on_blur для сохранения.
+    Ctrl+V картинка через JS proxy.
     """
     has_value = entry["value"] != ""
-    is_image = _is_image_value(entry["value"])
+    has_image = entry["image_src"] != ""
 
     return rx.el.div(
         # ── Label row ─────────────────────────────────────────
         rx.hstack(
-            # Левая полоска-акцент
             rx.box(
                 width="3px", height="14px",
                 border_radius="2px",
@@ -175,30 +385,23 @@ def _tag_field(entry: dict) -> rx.Component:
                 flex="1",
                 transition="color 0.25s ease",
             ),
-            # Кнопка картинки
             rx.box(
                 rx.icon("image-plus", size=14, color="rgba(201,35,248,0.55)"),
                 on_click=EngrafoState.open_image_picker(entry["key"]),
                 border_radius="8px", padding="5px",
                 cursor="pointer",
-                _hover={
-                    "background": "rgba(201,35,248,0.10)",
-                    "& svg": {"color": C_PURPLE},
-                },
+                _hover={"background": "rgba(201,35,248,0.10)"},
                 transition="all 0.2s ease",
                 display="flex", align_items="center",
                 flex_shrink="0",
+                title="Вставить изображение (или Ctrl+V)",
             ),
-            # Кнопка expand
             rx.box(
                 rx.icon("maximize-2", size=13, color="rgba(232,234,240,0.30)"),
                 on_click=EngrafoState.open_expand_editor(entry["key"]),
                 border_radius="8px", padding="5px",
                 cursor="pointer",
-                _hover={
-                    "background": "rgba(255,255,255,0.06)",
-                    "& svg": {"color": "rgba(232,234,240,0.60)"},
-                },
+                _hover={"background": "rgba(255,255,255,0.06)"},
                 transition="all 0.2s ease",
                 display="flex", align_items="center",
                 flex_shrink="0",
@@ -206,60 +409,61 @@ def _tag_field(entry: dict) -> rx.Component:
             spacing="2", align="center", width="100%",
             padding="12px 14px 0",
         ),
-        # ── Toolbar (placeholder for rich-text, shown on focus) ──
         _tag_toolbar(),
-        # ── Content: image thumbnail OR textarea ──────────────
+        # ── Textarea (нативная, uncontrolled, on_blur сохраняет) ──
+        rx.el.textarea(
+            default_value=entry["text"],
+            placeholder=entry["label"],
+            class_name="tag-textarea",
+            on_blur=EngrafoState.set_tag_text(entry["key"]),
+            data_tag_key=entry["key"],
+        ),
+        # ── Миниатюра картинки (если есть) ──────────────────────
         rx.cond(
-            is_image,
-            # Image thumbnail view
+            has_image,
             rx.box(
                 rx.el.img(
-                    src=entry["value"],
-                    class_name="tag-image-thumb",
-                    alt="image",
+                    src=entry["image_src"],
+                    style={"max_width": "100%", "max_height": "120px",
+                           "border_radius": "8px", "display": "block", "margin": "0 auto"},
                 ),
                 rx.hstack(
-                    rx.icon("image", size=12, color=C_PURPLE),
-                    rx.text("Изображение загружено", font_size="11px",
-                            color=C_MUTED, font_family=SANS),
+                    rx.spacer(),
                     rx.box(
                         rx.icon("x", size=11, color=C_ERROR),
-                        on_click=EngrafoState.set_tag_value(entry["key"], ""),
-                        cursor="pointer", border_radius="6px", padding="3px",
-                        _hover={"background": "rgba(255,77,106,0.12)"},
-                        display="flex", align_items="center",
+                        rx.text("Удалить фото", font_size="10px",
+                                color=C_ERROR, font_family=SANS),
+                        on_click=EngrafoState.clear_tag_image(entry["key"]),
+                        display="flex", align_items="center", gap="4px",
+                        cursor="pointer", padding="4px 8px", border_radius="6px",
+                        _hover={"background": "rgba(255,77,106,0.10)"},
                     ),
-                    spacing="2", align="center",
+                    padding="4px 10px", width="100%",
                 ),
-                padding="10px 14px 14px",
-                display="flex", flex_direction="column", gap="8px",
-            ),
-            # Text textarea
-            rx.debounce_input(
-                rx.text_area(
-                    default_value=entry["value"],
-                    placeholder=entry["label"],
-                    on_change=EngrafoState.set_tag_value(entry["key"]),
-                    background="transparent",
-                    border="none",
-                    color=C_TEXT,
-                    font_family=SANS,
-                    font_size="14px",
-                    line_height="1.75",
-                    padding="8px 14px 14px",
-                    min_height="90px",
-                    resize="vertical",
-                    width="100%",
-                    _focus={"outline": "none", "box_shadow": "none"},
-                    _placeholder={
-                        "color": "rgba(255,255,255,0.10)",
-                        "font_weight": "400",
-                    },
-                ),
-                debounce_timeout=600,
+                padding="4px 14px 8px",
+                border_top="1px solid rgba(255,255,255,0.05)",
             ),
         ),
-        # ── Container — Apple card style via CSS class ────────
+        # ── Counter row ──────────────────────────────────────────
+        rx.hstack(
+            rx.spacer(),
+            rx.cond(
+                has_image,
+                rx.text(
+                    "+ фото",
+                    font_size="10px",
+                    color="rgba(201,35,248,0.65)",
+                    font_family=SANS,
+                    margin_right="6px",
+                ),
+            ),
+            rx.text(
+                entry["text"].length(),
+                font_size="10px", font_family=SANS,
+                color=rx.cond(entry["text"].length() > 480, C_ERROR, C_MUTED2),
+            ),
+            padding="0 14px 6px", width="100%",
+        ),
         class_name="tag-field-apple",
         style={"width": "100%"},
     )
@@ -329,7 +533,7 @@ def _profile_item(profile: dict) -> rx.Component:
             ),
             rx.button(
                 rx.icon("trash-2", size=10, color=C_ERROR),
-                on_click=EngrafoState.delete_profile(profile["id"]),
+                on_click=EngrafoState.confirm_delete_profile(profile["id"]),
                 background="transparent",
                 border=f"1px solid {C_BORDER}",
                 border_radius="6px", padding="3px 7px",
@@ -382,7 +586,7 @@ def _save_profile_dialog() -> rx.Component:
                     rx.button(
                         "Сохранить",
                         on_click=EngrafoState.save_profile,
-                        background=f"linear-gradient(135deg, {C_PURPLE}, #9B59B6)",
+                        background=f"linear-gradient(135deg, {C_PURPLE}, {C_PURPLE_DARK})",
                         color="white", border="none",
                         border_radius="10px", font_family=SANS,
                         font_weight="600", padding="7px 18px",
@@ -393,13 +597,253 @@ def _save_profile_dialog() -> rx.Component:
                 ),
                 spacing="3", width="100%",
             ),
-            background="#0A0F18",
+            background=C_DIALOG,
             border=f"1px solid {C_BORDER}",
             border_radius="20px", padding="24px",
             max_width="360px",
             backdrop_filter="blur(20px)",
         ),
         open=EngrafoState.show_save_profile_dialog,
+    )
+
+
+def _delete_profile_confirm_dialog() -> rx.Component:
+    """Диалог подтверждения удаления профиля."""
+    return rx.dialog.root(
+        rx.dialog.content(
+            rx.vstack(
+                rx.hstack(
+                    rx.icon("triangle-alert", size=20, color=C_ERROR),
+                    rx.dialog.title(
+                        "Удалить профиль?",
+                        font_size="16px", font_weight="700",
+                        font_family=SANS, color=C_TEXT,
+                    ),
+                    spacing="2", align="center",
+                ),
+                rx.text(
+                    "Удалить профиль? Это действие необратимо.",
+                    font_size="13px", color=C_MUTED, font_family=SANS,
+                ),
+                rx.hstack(
+                    rx.dialog.close(
+                        rx.button(
+                            "Отмена",
+                            on_click=EngrafoState.cancel_delete_profile,
+                            background="transparent",
+                            border=f"1px solid {C_BORDER}",
+                            border_radius="10px", color=C_MUTED,
+                            font_family=SANS, padding="7px 18px",
+                            cursor="pointer",
+                            _hover={"background": "rgba(255,255,255,0.06)"},
+                        ),
+                    ),
+                    rx.button(
+                        rx.hstack(
+                            rx.icon("trash-2", size=14),
+                            rx.text("Удалить", font_size="14px", font_family=SANS),
+                            spacing="1", align="center",
+                        ),
+                        on_click=EngrafoState.do_delete_profile,
+                        background=C_ERROR,
+                        color="white", border="none",
+                        border_radius="10px", font_family=SANS,
+                        font_weight="600", padding="7px 18px",
+                        cursor="pointer",
+                        _hover={"opacity": "0.85"},
+                    ),
+                    spacing="2", justify="end", width="100%",
+                ),
+                spacing="3", width="100%",
+            ),
+            background=C_DIALOG,
+            border=f"1px solid {C_BORDER}",
+            border_radius="20px", padding="24px",
+            max_width="400px",
+            backdrop_filter="blur(20px)",
+        ),
+        open=EngrafoState.show_delete_profile_confirm,
+    )
+
+
+def _restore_version_confirm_dialog() -> rx.Component:
+    """Диалог подтверждения восстановления версии."""
+    return rx.dialog.root(
+        rx.dialog.content(
+            rx.vstack(
+                rx.hstack(
+                    rx.icon("rotate-ccw", size=20, color=C_CYAN),
+                    rx.dialog.title(
+                        "Восстановить версию?",
+                        font_size="16px", font_weight="700",
+                        font_family=SANS, color=C_TEXT,
+                    ),
+                    spacing="2", align="center",
+                ),
+                rx.text(
+                    "Восстановить версию? Текущие значения тегов будут заменены.",
+                    font_size="13px", color=C_MUTED, font_family=SANS,
+                ),
+                rx.hstack(
+                    rx.dialog.close(
+                        rx.button(
+                            "Отмена",
+                            on_click=EngrafoState.cancel_restore_version,
+                            background="transparent",
+                            border=f"1px solid {C_BORDER}",
+                            border_radius="10px", color=C_MUTED,
+                            font_family=SANS, padding="7px 18px",
+                            cursor="pointer",
+                            _hover={"background": "rgba(255,255,255,0.06)"},
+                        ),
+                    ),
+                    rx.button(
+                        rx.hstack(
+                            rx.icon("rotate-ccw", size=14),
+                            rx.text("Восстановить", font_size="14px", font_family=SANS),
+                            spacing="1", align="center",
+                        ),
+                        on_click=EngrafoState.do_restore_version,
+                        background=f"linear-gradient(135deg, {C_CYAN}, #0FA3A0)",
+                        color="#040A0A", border="none",
+                        border_radius="10px", font_family=SANS,
+                        font_weight="600", padding="7px 18px",
+                        cursor="pointer",
+                        _hover={"opacity": "0.85"},
+                    ),
+                    spacing="2", justify="end", width="100%",
+                ),
+                spacing="3", width="100%",
+            ),
+            background=C_DIALOG,
+            border=f"1px solid {C_BORDER}",
+            border_radius="20px", padding="24px",
+            max_width="420px",
+            backdrop_filter="blur(20px)",
+        ),
+        open=EngrafoState.show_restore_confirm,
+    )
+
+
+def _expand_editor_dialog() -> rx.Component:
+    """Модальный expand-редактор: отдельные поля для текста и картинки."""
+    return rx.dialog.root(
+        rx.dialog.content(
+            rx.vstack(
+                # ── Header ──────────────────────────────────────────
+                rx.hstack(
+                    rx.icon("maximize-2", size=18, color=C_CYAN),
+                    rx.dialog.title(
+                        EngrafoState.expand_label,
+                        font_size="16px", font_weight="700",
+                        font_family=SANS, color=C_TEXT,
+                        margin="0",
+                    ),
+                    rx.spacer(),
+                    rx.dialog.close(
+                        rx.icon("x", size=16, color=C_MUTED, cursor="pointer"),
+                        on_click=EngrafoState.close_expand_editor,
+                    ),
+                    spacing="2", align="center", width="100%",
+                ),
+                # ── Textarea для текста (нативная) ──────────────────
+                rx.el.textarea(
+                    value=EngrafoState.expand_text,
+                    on_change=EngrafoState.set_expand_text,
+                    placeholder="Введите текст...",
+                    class_name="expand-textarea",
+                    data_tag_key="__EXPAND__",
+                ),
+                # ── Миниатюра картинки ──────────────────────────────
+                rx.cond(
+                    EngrafoState.expand_image_src != "",
+                    rx.box(
+                        rx.el.img(
+                            src=EngrafoState.expand_image_src,
+                            style={"max_width": "100%", "max_height": "220px",
+                                   "border_radius": "8px", "display": "block",
+                                   "margin": "0 auto"},
+                        ),
+                        rx.hstack(
+                            rx.spacer(),
+                            rx.box(
+                                rx.icon("x", size=11, color=C_ERROR),
+                                rx.text("Удалить фото", font_size="10px",
+                                        color=C_ERROR, font_family=SANS),
+                                on_click=EngrafoState.clear_expand_image,
+                                display="flex", align_items="center", gap="4px",
+                                cursor="pointer", padding="4px 8px",
+                                border_radius="6px",
+                                _hover={"background": "rgba(255,77,106,0.10)"},
+                            ),
+                            padding="4px 0", width="100%",
+                        ),
+                        padding="10px",
+                        background="rgba(255,255,255,0.02)",
+                        border=f"1px solid {C_BORDER}",
+                        border_radius="10px",
+                        width="100%",
+                    ),
+                ),
+                # ── Кнопка добавить картинку ─────────────────────────
+                rx.cond(
+                    EngrafoState.expand_image_src == "",
+                    rx.button(
+                        rx.hstack(
+                            rx.icon("image-plus", size=13),
+                            rx.text("Добавить изображение",
+                                    font_size="12px", font_family=SANS),
+                            spacing="1", align="center",
+                        ),
+                        on_click=EngrafoState.open_image_picker("__EXPAND__"),
+                        background="rgba(201,35,248,0.08)",
+                        border="1px solid rgba(201,35,248,0.20)",
+                        border_radius="8px", color=C_PURPLE,
+                        padding="5px 12px", cursor="pointer",
+                        font_family=SANS,
+                        _hover={"background": "rgba(201,35,248,0.16)"},
+                        width="fit-content",
+                    ),
+                ),
+                # ── Кнопки ──────────────────────────────────────────
+                rx.hstack(
+                    rx.dialog.close(
+                        rx.button(
+                            "Отмена",
+                            on_click=EngrafoState.close_expand_editor,
+                            background="transparent",
+                            border=f"1px solid {C_BORDER}",
+                            border_radius="10px", color=C_MUTED,
+                            font_family=SANS, padding="7px 18px",
+                            cursor="pointer",
+                            _hover={"background": "rgba(255,255,255,0.06)"},
+                        ),
+                    ),
+                    rx.button(
+                        rx.hstack(
+                            rx.icon("check", size=14),
+                            rx.text("Сохранить", font_size="14px", font_family=SANS),
+                            spacing="1", align="center",
+                        ),
+                        on_click=EngrafoState.save_expand_and_close,
+                        background=f"linear-gradient(135deg, {C_CYAN}, #0FA3A0)",
+                        color="#040A0A", border="none",
+                        border_radius="10px", font_family=SANS,
+                        font_weight="600", padding="7px 18px",
+                        cursor="pointer",
+                        _hover={"opacity": "0.85"},
+                    ),
+                    spacing="2", justify="end", width="100%",
+                ),
+                spacing="3", width="100%",
+            ),
+            background=C_DIALOG,
+            border=f"1px solid {C_BORDER}",
+            border_radius="20px", padding="24px",
+            max_width="640px", width="92vw",
+            backdrop_filter="blur(20px)",
+        ),
+        open=EngrafoState.expand_key != "",
     )
 
 
@@ -443,7 +887,7 @@ def _version_item(v: dict) -> rx.Component:
         rx.spacer(),
         rx.button(
             rx.icon("rotate-ccw", size=10),
-            on_click=EngrafoState.restore_version(v["id"]),
+            on_click=EngrafoState.confirm_restore_version(v["id"]),
             background="rgba(34,242,239,0.08)",
             border="1px solid rgba(34,242,239,0.20)",
             border_radius="6px", padding="3px 7px",
@@ -464,9 +908,9 @@ def _sidebar_versions() -> rx.Component:
                 rx.cond(
                     EngrafoState.autosave_pending,
                     rx.hstack(
-                        rx.spinner(size="1", color=C_CYAN),
-                        rx.text("авто...", font_size="10px",
-                                color=C_MUTED2, font_family=SANS),
+                        rx.spinner(size="2", color=C_CYAN),
+                        rx.text("авто...", font_size="12px",
+                                color=C_MUTED, font_family=SANS),
                         spacing="1", align="center",
                     ),
                 ),
@@ -540,6 +984,21 @@ def _tags_panel() -> rx.Component:
                 rx.text("Поля шаблона", font_size="14px", font_weight="700",
                         font_family=SANS, color=C_TEXT),
                 rx.spacer(),
+                # Кнопка загрузки файлов контекста
+                rx.button(
+                    rx.hstack(
+                        rx.icon("folder-open", size=13),
+                        rx.text("Контекст", font_size="11px", font_family=SANS, font_weight="500"),
+                        spacing="1", align="center",
+                    ),
+                    on_click=EngrafoState.open_context_upload,
+                    background="rgba(34,242,239,0.07)",
+                    border=f"1px solid rgba(34,242,239,0.20)",
+                    border_radius="8px", color=C_CYAN,
+                    padding="4px 10px", cursor="pointer",
+                    _hover={"background": "rgba(34,242,239,0.13)"},
+                    margin_right="1",
+                ),
                 rx.cond(
                     EngrafoState.has_tags,
                     rx.hstack(
@@ -698,7 +1157,7 @@ def _preview_panel() -> rx.Component:
                     rx.text("PDF появится здесь",
                             font_size="14px", font_weight="600",
                             color=C_MUTED, font_family=SANS),
-                    rx.text("Заполните теги и нажмите ↻",
+                    rx.text("Заполните теги и нажмите кнопку обновления",
                             font_size="12px", color=C_MUTED2,
                             font_family=SANS, text_align="center"),
                     spacing="2", align="center",
@@ -797,9 +1256,14 @@ def _image_picker() -> rx.Component:
                         ),
                         width="100%", align="center",
                     ),
-                    rx.text(
-                        "Тег: " + EngrafoState.image_picker_key,
-                        font_size="12px", color=C_MUTED2, font_family=MONO,
+                    rx.cond(
+                        EngrafoState.image_picker_key == "__EXPAND__",
+                        rx.text("Для расширенного редактора",
+                                font_size="12px", color=C_MUTED2, font_family=SANS),
+                        rx.text(
+                            "Тег: " + EngrafoState.image_picker_key,
+                            font_size="12px", color=C_MUTED2, font_family=MONO,
+                        ),
                     ),
                     rx.upload(
                         rx.vstack(
@@ -839,7 +1303,7 @@ def _image_picker() -> rx.Component:
                             on_click=EngrafoState.handle_image_upload(
                                 rx.upload_files(upload_id="engrafo-image-upload")
                             ),
-                            background=f"linear-gradient(135deg, {C_PURPLE}, #9B59B6)",
+                            background=f"linear-gradient(135deg, {C_PURPLE}, {C_PURPLE_DARK})",
                             color="white", border="none",
                             border_radius="10px", font_family=SANS,
                             font_weight="600", padding="7px 18px",
@@ -854,10 +1318,10 @@ def _image_picker() -> rx.Component:
                 top="50%", left="50%",
                 transform="translate(-50%, -50%)",
                 z_index="500",
-                background="#0A0F18",
+                background=C_DIALOG,
                 border=f"1px solid {C_BORDER}",
                 border_radius="20px", padding="24px",
-                width="420px",
+                max_width="420px", width="92vw",
                 backdrop_filter="blur(20px)",
                 box_shadow="0 20px 60px rgba(0,0,0,0.60)",
             ),
@@ -874,7 +1338,7 @@ def _toasts() -> rx.Component:
             rx.box(
                 rx.hstack(
                     rx.box(
-                        rx.icon("check-circle", size=14, color=C_SUCCESS),
+                        rx.icon("check-circle", size=14, color=C_GREEN),
                         background="rgba(73,220,122,0.15)",
                         border_radius="6px", padding="4px",
                     ),
@@ -915,7 +1379,7 @@ def _toasts() -> rx.Component:
                     ),
                     spacing="2", align="center", width="100%",
                 ),
-                position="fixed", bottom="24px", right="24px", z_index="300",
+                position="fixed", bottom="88px", right="24px", z_index="300",
                 background=C_CARD2,
                 border="1px solid rgba(255,77,106,0.30)",
                 border_radius="14px", padding="12px 16px", max_width="360px",
@@ -932,8 +1396,24 @@ def engrafo_editor_page() -> rx.Component:
     return rx.box(
         rx.script(src="/engrafo_editor.js"),
         rx.el.link(rel="stylesheet", href="/engrafo.css"),
+        # Proxy-textarea для Ctrl+V картинок (JS пишет сюда, Reflex читает)
+        rx.el.textarea(
+            id="engrafo-paste-proxy",
+            on_change=EngrafoState.handle_clipboard_paste,
+            style={
+                "position": "fixed", "top": "-9999px", "left": "-9999px",
+                "width": "1px", "height": "1px", "opacity": "0",
+                "pointer_events": "none", "z_index": "-1",
+                "tab_index": "-1",
+            },
+            aria_hidden="true",
+        ),
         header(),
         _save_profile_dialog(),
+        _delete_profile_confirm_dialog(),
+        _restore_version_confirm_dialog(),
+        _expand_editor_dialog(),
+        _context_upload_dialog(),
         _image_picker(),
         _toasts(),
 

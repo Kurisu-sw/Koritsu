@@ -18,7 +18,7 @@ from koritsu.state.engrafo_state  import EngrafoState                    # noqa:
 # ── App ────────────────────────────────────────────────────────────────────────
 app = rx.App(
     style={
-        "font_family": "'Segoe UI', system-ui, sans-serif",
+        "font_family": "'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif",
         "background":  "#0a0a0a",
         "margin":      "0",
         "padding":     "0",

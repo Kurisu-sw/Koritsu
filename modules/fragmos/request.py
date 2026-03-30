@@ -17,6 +17,7 @@ TOKENIZE_URL = "https://llm.api.cloud.yandex.net/foundationModels/v1/tokenize"
 BASE_MODEL = "yandexgpt"
 
 TOKEN_MULTIPLIER = 2
+TOKEN_BUFFER = 5   # extra internal tokens added to estimate as safety margin
 
 _DEFAULT_API_KEY = "2-"
 _DEFAULT_PROJECT_ID = "2"

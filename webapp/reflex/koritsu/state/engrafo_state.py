@@ -12,8 +12,10 @@ engrafo_state.py — Reflex State для модуля Engrafo.
 import asyncio
 import base64
 import os
+import re as _re
 import sys
 import time
+from html import unescape as _unescape
 from typing import Any
 
 import reflex as rx
@@ -95,6 +97,65 @@ def _sync_generate_preview(user_uuid: str, report_id: str,
     return f"{api_url}/files/users/{user_uuid}/engrafo/reports/{report_id}/current.pdf?t={ts}"
 
 
+def _clean_value(v: str) -> str:
+    """Strip leftover HTML from old contenteditable data."""
+    if not v or v.startswith("data:image/"):
+        return v
+    if "<" not in v:
+        return v
+    # Extract first bare data URL from HTML img tags if present
+    m = _re.search(r'<img[^>]+src=["\']?(data:image/[^"\'>\s]+)', v)
+    if m:
+        return m.group(1)
+    # Strip all HTML tags
+    text = _re.sub(r'<br\s*/?>', '\n', v, flags=_re.IGNORECASE)
+    text = _re.sub(r'<[^>]+>', '', text)
+    return _unescape(text).strip()
+
+
+def _parse_tag_value(value: str) -> tuple[str, str]:
+    """Parse tag value → (text_part, image_src).
+
+    Handles: plain text, plain data:image/... URL, HTML with <img>.
+    Returns (text, image_src) where both can be empty.
+    """
+    if not value:
+        return "", ""
+    if value.startswith("data:image/"):
+        return "", value
+    if "<img" not in value:
+        text = _re.sub(r'<br\s*/?>', '\n', value, flags=_re.IGNORECASE)
+        text = _re.sub(r'<[^>]+>', '', text)
+        return _unescape(text).strip(), ""
+    # HTML with embedded image — extract first <img src>
+    m = _re.search(r'<img[^>]+src=["\']([^"\']+)["\']', value)
+    image_src = m.group(1) if m else ""
+    text = _re.sub(r'<img[^>]+/?>', '', value)
+    text = _re.sub(r'<br\s*/?>', '\n', text, flags=_re.IGNORECASE)
+    text = _re.sub(r'<[^>]+>', '', text)
+    return _unescape(text).strip(), image_src
+
+
+def _build_tag_value(text: str, image_src: str) -> str:
+    """Combine text and image_src into a value string for docx rendering."""
+    t = (text or "").strip()
+    i = (image_src or "").strip()
+    if not t and not i:
+        return ""
+    if not i:
+        return t
+    if not t:
+        return i  # plain data URL — backward compat for image-only tags
+    return t.replace('\n', '<br>') + '<br><img src="' + i + '">'
+
+
+def _make_tag_entry(key: str, label: str, value: str) -> dict[str, str]:
+    """Create a full tag entry dict with text/image_src split from value."""
+    text, image_src = _parse_tag_value(value)
+    return {"key": key, "label": label, "value": value,
+            "text": text, "image_src": image_src}
+
+
 # ── State ──────────────────────────────────────────────────────────────────────
 
 class EngrafoState(rx.State):
@@ -153,15 +214,39 @@ class EngrafoState(rx.State):
     # ── Expand editor (модальное окно для длинного текста) ────────────────────
     expand_key: str = ""      # ключ тега, открытого в expand-редакторе
     expand_label: str = ""    # label тега
-    expand_value: str = ""    # текущее значение в expand
+    expand_value: str = ""    # текущее значение в expand (комбинированное)
+    expand_text: str = ""     # текстовая часть в expand
+    expand_image_src: str = ""  # картинка в expand (data URL)
 
     # ── Image picker ──────────────────────────────────────────────────────────
     image_picker_key: str = ""   # ключ тега, в который вставляем картинку
+
+    # ── Clipboard paste proxy ─────────────────────────────────────────────────
+    clipboard_paste_data: str = ""   # данные от JS при Ctrl+V (KEY|||data:image/...)
+
+    # ── Context file upload ───────────────────────────────────────────────────
+    show_context_upload: bool = False
+    context_files: list[dict[str, str]] = []   # [{name, size, ext}]
+
+    # ── Tag history (последние 3 уникальных значения для chips) ────────────
+    tag_history: dict[str, list[str]] = {}
 
     # ── Autosave ──────────────────────────────────────────────────────────────
     autosave_pending: bool = False
     _last_change_ts:  float = 0.0   # timestamp последнего изменения тега
     _last_save_ts:    float = 0.0   # timestamp последнего автосохранения
+
+    # ── Delete report confirmation ───────────────────────────────────────────
+    pending_delete_id: str = ""
+    show_delete_confirm: bool = False
+
+    # ── Delete profile confirmation ──────────────────────────────────────────
+    pending_delete_profile_id: str = ""
+    show_delete_profile_confirm: bool = False
+
+    # ── Restore version confirmation ─────────────────────────────────────────
+    show_restore_confirm: bool = False
+    pending_restore_version_id: str = ""
 
     # ── Feedback ──────────────────────────────────────────────────────────────
     error_msg:   str = ""
@@ -190,6 +275,8 @@ class EngrafoState(rx.State):
 
         if self.current_report_id:
             await self._load_current_report()
+        self._load_context_files()
+        self.form_key += 1  # trigger contenteditable re-sync after state loads
 
     async def _sync_user(self):
         """Получить user_uuid из AuthState."""
@@ -242,7 +329,7 @@ class EngrafoState(rx.State):
         tpl_path = _tm.get_template_path(self.user_uuid, self.selected_template_id)
         if tpl_path:
             self.tag_entries = [
-                {"key": t["key"], "label": t["label"], "value": ""}
+                _make_tag_entry(t["key"], t["label"], "")
                 for t in _tm.extract_tags(tpl_path)
             ]
 
@@ -267,7 +354,7 @@ class EngrafoState(rx.State):
         if tpl_path:
             old_values = {e["key"]: e["value"] for e in self.tag_entries}
             self.tag_entries = [
-                {"key": t["key"], "label": t["label"], "value": str(old_values.get(t["key"], ""))}
+                _make_tag_entry(t["key"], t["label"], str(old_values.get(t["key"], "")))
                 for t in _tm.extract_tags(tpl_path)
             ]
         else:
@@ -296,16 +383,74 @@ class EngrafoState(rx.State):
         """Снять выбор со всех тегов."""
         self.selected_tags = []
 
-    async def set_tag_value(self, key: str, value: str):
-        """Обновить значение одного тега."""
+    def set_tag_value(self, key: str, value: str):
+        """Обновить значение одного тега (backward compat)."""
         self.tag_entries = [
-            {**e, "value": value} if e["key"] == key else e
+            _make_tag_entry(e["key"], e["label"], value) if e["key"] == key else e
             for e in self.tag_entries
         ]
         self._last_change_ts = time.time()
-        # Автосохранение (если прошло ≥5 мин с последнего)
         self._try_autosave()
-        yield EngrafoState.generate_preview
+
+    def set_tag_text(self, key: str, text: str):
+        """Обновить текстовую часть тега (вызывается на on_blur textarea)."""
+        self.tag_entries = [
+            _make_tag_entry(e["key"], e["label"],
+                            _build_tag_value(text, e.get("image_src", "")))
+            if e["key"] == key else e
+            for e in self.tag_entries
+        ]
+        self._last_change_ts = time.time()
+        self._try_autosave()
+
+    def set_tag_image(self, key: str, data_url: str):
+        """Установить картинку для тега (сохраняет текст)."""
+        self.tag_entries = [
+            _make_tag_entry(e["key"], e["label"],
+                            _build_tag_value(e.get("text", ""), data_url))
+            if e["key"] == key else e
+            for e in self.tag_entries
+        ]
+        self._last_change_ts = time.time()
+        self._try_autosave()
+
+    def clear_tag_image(self, key: str):
+        """Удалить картинку тега, сохранив текст."""
+        self.tag_entries = [
+            _make_tag_entry(e["key"], e["label"], e.get("text", ""))
+            if e["key"] == key else e
+            for e in self.tag_entries
+        ]
+        self._last_change_ts = time.time()
+        self._try_autosave()
+
+    def handle_clipboard_paste(self, data: str):
+        """Вызывается из JS при Ctrl+V с картинкой.
+        Формат data: 'TAG_KEY|||data:image/...' или '__EXPAND__|||data:image/...'
+        """
+        if not data or "|||" not in data:
+            self.clipboard_paste_data = ""
+            return
+        key, data_url = data.split("|||", 1)
+        self.clipboard_paste_data = ""
+        if not data_url.startswith("data:image/"):
+            return
+        if len(data_url) > 10 * 1024 * 1024:
+            self.error_msg = "Картинка слишком большая (макс. ~7 MB)"
+            return
+        if key == "__EXPAND__":
+            self.set_expand_image(data_url)
+        else:
+            self.set_tag_image(key, data_url)
+
+    def clear_tag_value(self, key: str):
+        """Полностью очистить значение тега (текст и картинку)."""
+        self.tag_entries = [
+            _make_tag_entry(e["key"], e["label"], "") if e["key"] == key else e
+            for e in self.tag_entries
+        ]
+        self._last_change_ts = time.time()
+        self._try_autosave()
 
     # =========================================================================
     # Image picker
@@ -320,16 +465,37 @@ class EngrafoState(rx.State):
                 self.expand_key = key
                 self.expand_label = e["label"]
                 self.expand_value = e["value"]
+                self.expand_text = e.get("text", "")
+                self.expand_image_src = e.get("image_src", "")
                 break
 
     def set_expand_value(self, value: str):
+        """Backward compat: устанавливает expand_value и парсит text/image."""
         self.expand_value = value
+        self.expand_text, self.expand_image_src = _parse_tag_value(value)
+
+    def set_expand_text(self, text: str):
+        """Обновить текст в expand-редакторе."""
+        self.expand_text = text
+        self.expand_value = _build_tag_value(text, self.expand_image_src)
+
+    def set_expand_image(self, data_url: str):
+        """Установить картинку в expand-редакторе."""
+        self.expand_image_src = data_url
+        self.expand_value = _build_tag_value(self.expand_text, data_url)
+
+    def clear_expand_image(self):
+        """Удалить картинку из expand-редактора."""
+        self.expand_image_src = ""
+        self.expand_value = _build_tag_value(self.expand_text, "")
 
     def save_expand_and_close(self):
-        """Сохранить значение из expand-редактора и закрыть."""
+        """Сохранить текст+картинку из expand-редактора и закрыть."""
         if self.expand_key:
+            value = _build_tag_value(self.expand_text, self.expand_image_src)
             self.tag_entries = [
-                {**e, "value": self.expand_value} if e["key"] == self.expand_key else e
+                _make_tag_entry(e["key"], e["label"], value)
+                if e["key"] == self.expand_key else e
                 for e in self.tag_entries
             ]
             self._last_change_ts = time.time()
@@ -338,11 +504,15 @@ class EngrafoState(rx.State):
         self.expand_key = ""
         self.expand_label = ""
         self.expand_value = ""
+        self.expand_text = ""
+        self.expand_image_src = ""
 
     def close_expand_editor(self):
         self.expand_key = ""
         self.expand_label = ""
         self.expand_value = ""
+        self.expand_text = ""
+        self.expand_image_src = ""
 
     # ── Image picker ──────────────────────────────────────────────────────────
 
@@ -353,31 +523,27 @@ class EngrafoState(rx.State):
         self.image_picker_key = ""
 
     async def handle_image_upload(self, files: list[rx.UploadFile]):
-        """Читает первый файл, кодирует в base64, вставляет в значение тега."""
+        """Читает файл, кодирует в base64, добавляет картинку в тег."""
         if not files or not self.image_picker_key:
             self.image_picker_key = ""
             return
         key = self.image_picker_key
+        self.image_picker_key = ""
         try:
             f = files[0]
             data = await f.read()
+            if len(data) > 8 * 1024 * 1024:
+                self.error_msg = "Файл слишком большой (макс. 8MB)"
+                return
             mime = f.content_type or "image/png"
             b64 = base64.b64encode(data).decode("utf-8")
             data_url = f"data:{mime};base64,{b64}"
-            self.tag_entries = [
-                {**e, "value": data_url} if e["key"] == key else e
-                for e in self.tag_entries
-            ]
-            self.form_key += 1
-            self.success_msg = f"Картинка вставлена в «{key}»"
-            self._last_change_ts = time.time()
-            self._try_autosave()
+            if key == "__EXPAND__":
+                self.set_expand_image(data_url)
+            else:
+                self.set_tag_image(key, data_url)
         except Exception as exc:
-            self.error_msg = f"Ошибка загрузки картинки: {exc}"
-        finally:
-            self.image_picker_key = ""
-        # Сохранить значения тегов на диск + обновить preview
-        yield EngrafoState.generate_preview
+            self.error_msg = f"Ошибка загрузки: {exc}"
 
     # =========================================================================
     # Autosave (версия каждые 5 мин после последнего изменения, макс 3 версии)
@@ -446,6 +612,29 @@ class EngrafoState(rx.State):
             self.versions  = _version_dicts(_rm.list_versions(self.user_uuid, self.current_report_id))
             self.success_msg = "Версия сохранена"
 
+    def confirm_restore_version(self, version_id: str):
+        """Open restore-version confirmation dialog."""
+        self.pending_restore_version_id = version_id
+        self.show_restore_confirm = True
+
+    def cancel_restore_version(self):
+        self.pending_restore_version_id = ""
+        self.show_restore_confirm = False
+
+    async def do_restore_version(self):
+        """Actually restore the version after confirmation."""
+        version_id = self.pending_restore_version_id
+        self.pending_restore_version_id = ""
+        self.show_restore_confirm = False
+        if not version_id or not self.current_report_id or not self.user_uuid:
+            return
+        ok = _rm.restore_version(self.user_uuid, self.current_report_id, version_id)
+        if ok:
+            await self._load_current_report()
+            self.form_key   += 1
+            self.success_msg = "Версия восстановлена"
+            yield EngrafoState.generate_preview
+
     async def restore_version(self, version_id: str):
         if not self.current_report_id or not self.user_uuid:
             return
@@ -489,11 +678,28 @@ class EngrafoState(rx.State):
             return
         stored = profile.get("tag_values", {})
         self.tag_entries = [
-            {**e, "value": stored.get(e["key"], "")}
+            _make_tag_entry(e["key"], e["label"], stored.get(e["key"], ""))
             for e in self.tag_entries
         ]
-        self.form_key += 1  # ремаунт debounce_input'ов
+        self.form_key += 1  # ремаунт textarea'ов (uncontrolled)
         yield EngrafoState.generate_preview
+
+    def confirm_delete_profile(self, profile_id: str):
+        """Open delete-profile confirmation dialog."""
+        self.pending_delete_profile_id = profile_id
+        self.show_delete_profile_confirm = True
+
+    def cancel_delete_profile(self):
+        self.pending_delete_profile_id = ""
+        self.show_delete_profile_confirm = False
+
+    def do_delete_profile(self):
+        """Actually delete the profile after confirmation."""
+        if self.pending_delete_profile_id and self.user_uuid:
+            _pm.delete_profile(self.user_uuid, self.pending_delete_profile_id)
+            self.profiles = _profile_dicts(_pm.list_profiles(self.user_uuid))
+        self.pending_delete_profile_id = ""
+        self.show_delete_profile_confirm = False
 
     def delete_profile(self, profile_id: str):
         _pm.delete_profile(self.user_uuid, profile_id)
@@ -529,6 +735,23 @@ class EngrafoState(rx.State):
         self.current_report_id = report_id
         return rx.redirect("/engrafo/editor")
 
+    def confirm_delete(self, report_id: str):
+        """Open delete-report confirmation dialog."""
+        self.pending_delete_id = report_id
+        self.show_delete_confirm = True
+
+    def cancel_delete(self):
+        self.pending_delete_id = ""
+        self.show_delete_confirm = False
+
+    def do_delete(self):
+        """Actually delete the report after confirmation."""
+        if self.pending_delete_id and self.user_uuid:
+            _rm.delete_report(self.user_uuid, self.pending_delete_id)
+            self.reports = _report_dicts(_rm.list_reports(self.user_uuid))
+        self.pending_delete_id = ""
+        self.show_delete_confirm = False
+
     def delete_report(self, report_id: str):
         _rm.delete_report(self.user_uuid, report_id)
         self.reports = _report_dicts(_rm.list_reports(self.user_uuid))
@@ -542,6 +765,86 @@ class EngrafoState(rx.State):
 
     def close_upload_dialog(self):
         self.show_upload_dialog = False
+
+    # =========================================================================
+    # Context file upload (для будущего AI-агента)
+    # =========================================================================
+
+    # Базовый путь к files/ FastAPI-сервера (относительно корня проекта)
+    _FILES_BASE: str = os.path.normpath(
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../../server/files")
+    )
+
+    _CONTEXT_ALLOWED_EXT = {".pdf", ".png", ".jpg", ".jpeg", ".webp", ".zip", ".txt", ".docx"}
+    _CONTEXT_MAX_SIZE    = 20 * 1024 * 1024  # 20MB
+
+    def open_context_upload(self):
+        self.show_context_upload = True
+
+    def close_context_upload(self):
+        self.show_context_upload = False
+
+    def _context_dir(self) -> str:
+        return os.path.join(self._FILES_BASE, "users", self.user_uuid, "engrafo", "context")
+
+    def _load_context_files(self):
+        ctx = self._context_dir()
+        if not os.path.exists(ctx):
+            self.context_files = []
+            return
+        files = []
+        for name in sorted(os.listdir(ctx)):
+            path = os.path.join(ctx, name)
+            if not os.path.isfile(path):
+                continue
+            size = os.path.getsize(path)
+            if size >= 1024 * 1024:
+                size_str = f"{size / 1024 / 1024:.1f} MB"
+            elif size >= 1024:
+                size_str = f"{size // 1024} KB"
+            else:
+                size_str = f"{size} B"
+            ext = os.path.splitext(name)[1].lower()
+            files.append({"name": name, "size": size_str, "ext": ext})
+        self.context_files = files
+
+    async def upload_context_files(self, files: list[rx.UploadFile]):
+        self.loading = True
+        self.error_msg = ""
+        yield
+
+        try:
+            ctx = self._context_dir()
+            os.makedirs(ctx, exist_ok=True)
+            saved = 0
+            for file in files:
+                ext = os.path.splitext(file.filename or "")[1].lower()
+                if ext not in self._CONTEXT_ALLOWED_EXT:
+                    continue
+                content = await file.read()
+                if len(content) > self._CONTEXT_MAX_SIZE:
+                    self.error_msg = f"{file.filename}: файл слишком большой (макс. 20MB)"
+                    continue
+                # Sanitize filename
+                safe = "".join(c for c in (file.filename or "file") if c.isalnum() or c in ".-_ ")[:120]
+                with open(os.path.join(ctx, safe), "wb") as fh:
+                    fh.write(content)
+                saved += 1
+            self._load_context_files()
+            if saved:
+                self.success_msg = f"Загружено файлов: {saved}"
+        except Exception as exc:
+            self.error_msg = f"Ошибка загрузки: {exc}"
+        finally:
+            self.loading = False
+
+    def delete_context_file(self, filename: str):
+        if "/" in filename or "\\" in filename or ".." in filename:
+            return
+        path = os.path.join(self._context_dir(), filename)
+        if os.path.isfile(path):
+            os.remove(path)
+        self._load_context_files()
 
     def open_tags_modal(self):
         self.show_tags_modal = True
@@ -632,12 +935,13 @@ class EngrafoState(rx.State):
         tpl_path = _tm.get_template_path(self.user_uuid, self.selected_template_id)
         if tpl_path:
             self.tag_entries = [
-                {"key": t["key"], "label": t["label"], "value": str(stored.get(t["key"], ""))}
+                _make_tag_entry(t["key"], t["label"],
+                                _clean_value(str(stored.get(t["key"], ""))))
                 for t in _tm.extract_tags(tpl_path)
             ]
         else:
             self.tag_entries = [
-                {"key": k, "label": k, "value": str(v)}
+                _make_tag_entry(k, k, _clean_value(str(v)))
                 for k, v in stored.items()
             ]
 

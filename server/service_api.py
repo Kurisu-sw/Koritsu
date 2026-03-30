@@ -165,17 +165,15 @@ async def fragmos_estimate(data: EstimateRequest):
     from request import AI_API, TOKEN_BUFFER  # type: ignore
 
     api = AI_API()
-    est = await api.estimate_charge(
-        data.code, prompt_key=data.model_id,
-        total_spent=getattr(data, "total_spent", 0),
-    )
-    required = est["charged"] + TOKEN_BUFFER
+    yandex_tokens = await api.estimate_tokens_from_text(data.code, prompt_key=data.model_id)
+    charged = api.charged_tokens(yandex_tokens)
+    required = charged + TOKEN_BUFFER
 
     return {
-        "estimated_yandex": est["yandex_tokens"],
-        "estimated_charged": est["charged"],
+        "estimated_yandex": yandex_tokens,
+        "estimated_charged": charged,
         "required_with_buffer": required,
-        "estimated_cost_rub": round(est["cost_rub"], 4),
+        "estimated_cost_rub": round(yandex_tokens * 0.4 / 1000, 4),
     }
 
 # Раздаём файлы из files/ по URL /files/...

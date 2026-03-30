@@ -1,0 +1,21 @@
+# База данных SQLite (путь к файлу)
+DATABASE_NAME=files/1.db
+
+# URL FastAPI сервера (используется внутри Reflex для API-запросов)
+# Локально: http://localhost:8001
+# Удалённо: http://<IP машины>:8001
+FASTAPI_URL=http://localhost:8001
+
+# URL Reflex фронтенда (используется в topology health check)
+# Локально: http://localhost:3000
+# Удалённо: http://<IP машины>:3000
+REFLEX_URL=http://localhost:3000
+
+# Yandex AI (нужен для модуля Fragmos)
+YC_API_KEY=1-
+YANDEX_PROJECT_ID=1
+YANDEX_API_KEY=1-
+
+# Admin credentials
+ADMIN_LOGIN=1
+ADMIN_PASSWORD=1

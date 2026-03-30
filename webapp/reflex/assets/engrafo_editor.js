@@ -1,17 +1,16 @@
 /**
  * engrafo_editor.js
- * Resize divider между Tags и Preview панелями.
  *
- * Хранит пропорцию (ratio) вместо пиксельных значений,
- * при ресайзе окна пересчитывает ширины по текущему доступному месту.
+ * 1. Resize divider между Tags и Preview панелями.
+ * 2. Ctrl+V paste картинок в tag-textarea и expand-textarea.
  */
 (function () {
   "use strict";
 
   var MOBILE_BP = 960;
-
-  // ratio = доля tags-панели от (tags + preview).  null = не задано (CSS по умолчанию)
   var savedRatio = null;
+
+  // ── Resize helpers ──────────────────────────────────────────────────
 
   function getElements() {
     return {
@@ -24,141 +23,144 @@
   }
 
   function clearInlineWidths(els) {
-    if (els.tags) {
-      els.tags.style.flex  = "";
-      els.tags.style.width = "";
-    }
-    if (els.preview) {
-      els.preview.style.flex  = "";
-      els.preview.style.width = "";
-    }
+    if (els.tags)    { els.tags.style.flex = ""; els.tags.style.width = ""; }
+    if (els.preview) { els.preview.style.flex = ""; els.preview.style.width = ""; }
   }
 
-  /** Применить сохранённый ratio к текущим размерам. */
   function applyRatio() {
     if (savedRatio === null) return;
     if (window.innerWidth <= MOBILE_BP) return;
-
     var els = getElements();
     if (!els.tags || !els.preview || !els.layout || !els.sidebar) return;
-
-    var gap     = 12;  // CSS gap
-    var divW    = els.divider ? els.divider.offsetWidth : 14;
-    var sideW   = els.sidebar.offsetWidth;
-    var totalW  = els.layout.offsetWidth;
-    var avail   = totalW - sideW - divW - gap * 3;  // пространство для tags+preview
-
-    if (avail < 400) {
-      // Слишком мало места — сбрасываем на CSS-дефолты
-      clearInlineWidths(els);
-      savedRatio = null;
-      return;
-    }
-
-    var tagsW    = Math.round(avail * savedRatio);
-    var previewW = avail - tagsW;
-
-    // Кламп минимумов
-    var minTags = 220, minPreview = 180;
-    if (tagsW < minTags) {
-      tagsW = minTags;
-      previewW = avail - tagsW;
-    }
-    if (previewW < minPreview) {
-      previewW = minPreview;
-      tagsW = avail - previewW;
-    }
-
-    els.tags.style.flex    = "none";
-    els.tags.style.width   = tagsW + "px";
-    els.preview.style.flex  = "none";
-    els.preview.style.width = previewW + "px";
+    var gap = 12, divW = els.divider ? els.divider.offsetWidth : 14;
+    var avail = els.layout.offsetWidth - els.sidebar.offsetWidth - divW - gap * 3;
+    if (avail < 400) { clearInlineWidths(els); savedRatio = null; return; }
+    var tagsW = Math.round(avail * savedRatio);
+    var prevW = avail - tagsW;
+    if (tagsW < 220) { tagsW = 220; prevW = avail - tagsW; }
+    if (prevW < 180) { prevW = 180; tagsW = avail - prevW; }
+    els.tags.style.flex = "none"; els.tags.style.width = tagsW + "px";
+    els.preview.style.flex = "none"; els.preview.style.width = prevW + "px";
   }
 
   function initResize() {
     var els = getElements();
-    if (!els.divider || !els.tags || !els.preview) {
-      setTimeout(initResize, 600);
-      return;
-    }
-
+    if (!els.divider || !els.tags || !els.preview) { setTimeout(initResize, 600); return; }
     els.divider.addEventListener("mousedown", function (e) {
       if (window.innerWidth <= MOBILE_BP) return;
       e.preventDefault();
-
-      var startX        = e.clientX;
-      var startTagsW    = els.tags.offsetWidth;
-      var startPreviewW = els.preview.offsetWidth;
-      var combined      = startTagsW + startPreviewW;
-
-      document.body.style.userSelect = "none";
-      document.body.style.cursor     = "col-resize";
-
+      var startX = e.clientX, startTagsW = els.tags.offsetWidth, startPrevW = els.preview.offsetWidth;
+      var combined = startTagsW + startPrevW;
+      document.body.style.userSelect = "none"; document.body.style.cursor = "col-resize";
       function onMove(ev) {
-        var dx       = ev.clientX - startX;
+        var dx = ev.clientX - startX;
         var newTagsW = Math.max(220, Math.min(combined - 180, startTagsW + dx));
-        var newPrevW = combined - newTagsW;
-
-        els.tags.style.flex    = "none";
-        els.tags.style.width   = newTagsW + "px";
-        els.preview.style.flex  = "none";
-        els.preview.style.width = newPrevW + "px";
-
-        // Сохраняем пропорцию
+        els.tags.style.flex = "none"; els.tags.style.width = newTagsW + "px";
+        els.preview.style.flex = "none"; els.preview.style.width = (combined - newTagsW) + "px";
         savedRatio = newTagsW / combined;
       }
-
       function onUp() {
-        document.body.style.userSelect = "";
-        document.body.style.cursor     = "";
+        document.body.style.userSelect = ""; document.body.style.cursor = "";
         document.removeEventListener("mousemove", onMove);
-        document.removeEventListener("mouseup",   onUp);
+        document.removeEventListener("mouseup", onUp);
       }
-
       document.addEventListener("mousemove", onMove);
-      document.addEventListener("mouseup",   onUp);
+      document.addEventListener("mouseup", onUp);
     });
   }
 
-  // ── Window resize: пересчитать или сбросить ──────────────────────
   var wasMobile = window.innerWidth <= MOBILE_BP;
-
   window.addEventListener("resize", function () {
     var isMobile = window.innerWidth <= MOBILE_BP;
-
-    if (isMobile) {
-      if (!wasMobile) {
-        // Только что стали мобильными — убрать inline стили
-        clearInlineWidths(getElements());
-      }
-    } else {
-      // Десктоп — пересчитать по ratio
-      applyRatio();
-    }
-
+    if (isMobile) { if (!wasMobile) clearInlineWidths(getElements()); }
+    else { applyRatio(); }
     wasMobile = isMobile;
   });
 
-  // ── Init ─────────────────────────────────────────────────────────
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", function () { setTimeout(initResize, 800); });
-  } else {
-    setTimeout(initResize, 800);
+  // ── Image paste (Ctrl+V) ────────────────────────────────────────────
+
+  /**
+   * Trigger React's onChange on a textarea via native value setter.
+   * Required because React overrides the setter and listens to `input` events.
+   */
+  function reactSetValue(el, value) {
+    var nativeSetter = Object.getOwnPropertyDescriptor(
+      window.HTMLTextAreaElement.prototype, "value"
+    ).set;
+    nativeSetter.call(el, value);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
   }
 
-  // Re-init on DOM changes (Reflex re-renders)
+  function initPaste() {
+    document.addEventListener("paste", function (e) {
+      var focused = document.activeElement;
+      if (!focused) return;
+
+      // Find the nearest element with data-tag-key (the tag textarea itself or a parent)
+      var tagEl = focused.hasAttribute("data-tag-key")
+        ? focused
+        : focused.closest("[data-tag-key]");
+      if (!tagEl) return;
+
+      var key = tagEl.getAttribute("data-tag-key");
+      if (!key) return;
+
+      var items = (e.clipboardData || window.clipboardData || {}).items;
+      if (!items) return;
+
+      for (var i = 0; i < items.length; i++) {
+        if (items[i].type && items[i].type.startsWith("image/")) {
+          e.preventDefault();
+          var file = items[i].getAsFile();
+          if (!file) continue;
+          (function (tagKey) {
+            var reader = new FileReader();
+            reader.onload = function (ev) {
+              var dataUrl = ev.target.result;
+              var proxy = document.getElementById("engrafo-paste-proxy");
+              if (proxy) {
+                reactSetValue(proxy, tagKey + "|||" + dataUrl);
+              }
+            };
+            reader.readAsDataURL(file);
+          })(key);
+          return;
+        }
+      }
+    }, false);
+  }
+
+  // ── Init ───────────────────────────────────────────────────────────
+
+  function init() {
+    initResize();
+    initPaste();
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", function () { setTimeout(init, 800); });
+  } else {
+    setTimeout(init, 800);
+  }
+
+  // Re-init on Reflex re-renders (MutationObserver)
   var _resizeInit = false;
-  var observer = new MutationObserver(function () {
+  var _pasteInit  = false;
+  var domObserver = new MutationObserver(function () {
     if (!_resizeInit && document.getElementById("engrafo-resize-divider")) {
       _resizeInit = true;
       initResize();
     }
+    if (!_pasteInit && document.getElementById("engrafo-paste-proxy")) {
+      _pasteInit = true;
+      initPaste();
+    }
   });
   if (document.body) {
-    observer.observe(document.body, { childList: true, subtree: true });
+    domObserver.observe(document.body, { childList: true, subtree: true });
   } else {
     document.addEventListener("DOMContentLoaded", function () {
-      observer.observe(document.body, { childList: true, subtree: true });
+      domObserver.observe(document.body, { childList: true, subtree: true });
     });
   }
 

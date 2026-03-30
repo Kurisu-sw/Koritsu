@@ -316,7 +316,8 @@ class AuthState(rx.State):
             icon = ud.get("icon") or ""
             # превращаем серверный путь в URL
             if icon:
-                self.user_icon = f"{API_URL}/{icon}"
+                import time as _time
+                self.user_icon = f"{API_URL}/{icon}?t={int(_time.time())}"
             else:
                 self.user_icon = ""
             self.sub_level = ud.get("sub_level", "free")
