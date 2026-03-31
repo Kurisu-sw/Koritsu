@@ -100,6 +100,9 @@ class FragmosState(rx.State):
     cfg_while_back_turn_gap:  int  = 20
     cfg_while_back_top_gap:   int  = 15
 
+    # ── Page mode ─────────────────────────────────────────────────────────────
+    page_mode: str = "fragmos"   # "fragmos" | "klassis"
+
     # ── Delete confirmation ───────────────────────────────────────────────────
     delete_confirm_id:   str  = ""
     delete_confirm_open: bool = False

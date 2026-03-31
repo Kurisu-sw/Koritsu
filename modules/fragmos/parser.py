@@ -301,3 +301,5 @@ def _parse_loop(lines, start, end, loop_kw):
         'value': value,
         'children': children,
     }, next_i
+
+

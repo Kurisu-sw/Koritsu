@@ -5,6 +5,7 @@ DATABASE_NAME=files/1.db
 # Локально: http://localhost:8001
 # Удалённо: http://<IP машины>:8001
 FASTAPI_URL=http://localhost:8001
+PUBLIC_FILES_URL=http://localhost:8002
 
 # URL Reflex фронтенда (используется в topology health check)
 # Локально: http://localhost:3000

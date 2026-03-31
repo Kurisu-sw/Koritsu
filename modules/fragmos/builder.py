@@ -772,13 +772,6 @@ def _split_functions(nodes):
 # ═══════════════════════════════════════════════════════════════════════════
 
 def generate(frg_path, out_path=None, cfg_overrides=None):
-    """
-    Генерирует .xml блок-схему из .frg файла.
-
-    frg_path      — путь к .frg файлу
-    out_path      — путь для сохранения .xml (по умолчанию рядом с .frg)
-    cfg_overrides — словарь с переопределениями настроек (необязательно)
-    """
     import sys
     _pkg_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if _pkg_root not in sys.path:

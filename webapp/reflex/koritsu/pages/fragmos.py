@@ -1,6 +1,7 @@
 import reflex as rx
 from koritsu.state.fragmos_state import FragmosState
-from koritsu.state.auth_state import AuthState
+from koritsu.state.auth_state    import AuthState
+from koritsu.state.klassis_state import KlassisState, LANGUAGES
 from koritsu.components.header import header
 
 # ── Palette ───────────────────────────────────────────────────────────────────
@@ -355,55 +356,181 @@ def auth_required() -> rx.Component:
     )
 
 
+def _klassis_chat_item(chat: dict) -> rx.Component:
+    is_active = KlassisState.selected_chat_id == chat["id"]
+    return rx.box(
+        rx.icon("boxes", size=14,
+                color=rx.cond(is_active, ACTIVE_TXT, MUTED)),
+        rx.box(
+            rx.text(chat["name"], font_size="13px", font_weight="600",
+                    color=rx.cond(is_active, ACTIVE_TXT, TEXT),
+                    overflow="hidden", text_overflow="ellipsis",
+                    white_space="nowrap"),
+            rx.text(chat["timestamp"], font_size="11px", margin_top="1px",
+                    color=rx.cond(is_active, "rgba(96,165,250,0.65)", MUTED)),
+            flex="1", min_width="0",
+        ),
+        rx.button(
+            rx.icon("trash-2", size=12, color=DANGER),
+            width="24px", height="24px",
+            background="transparent", border="none",
+            border_radius="6px", cursor="pointer", flex_shrink="0",
+            display="flex", align_items="center", justify_content="center",
+            opacity="0",
+            css={"transition": "opacity 0.15s, background 0.15s",
+                 ".group:hover &": {"opacity": "1"},
+                 "&:hover": {"background": DANGER_BG}},
+            on_click=KlassisState.on_request_delete(chat["id"]),
+        ),
+        class_name="group",
+        display="flex", align_items="center", gap="8px",
+        padding="10px 12px",
+        border_radius="12px",
+        cursor="pointer",
+        background=rx.cond(is_active, ACTIVE_BG, "transparent"),
+        border=rx.cond(is_active, f"1px solid {BORDER_BLUE}", "1px solid transparent"),
+        box_shadow=rx.cond(is_active, "0 2px 8px rgba(59,130,246,0.12)", "none"),
+        transition="all 0.15s ease",
+        _hover={"background": rx.cond(is_active, ACTIVE_BG, PANEL_HVR)},
+        on_click=KlassisState.on_select_chat(chat["id"]),
+    )
+
+
 def sidebar() -> rx.Component:
     return rx.box(
+        # ── Mode toggle ───────────────────────────────────────────────────────
+        rx.box(
+            rx.button(
+                rx.icon("network", size=13,
+                        color=rx.cond(FragmosState.page_mode == "fragmos", "white", MUTED)),
+                rx.text("Блок-схемы", font_size="12px", font_weight="600",
+                        color=rx.cond(FragmosState.page_mode == "fragmos", "white", MUTED)),
+                display="flex", align_items="center", gap="5px",
+                flex="1", justify_content="center",
+                padding="7px 10px",
+                background=rx.cond(
+                    FragmosState.page_mode == "fragmos",
+                    ACCENT, "transparent",
+                ),
+                border="none", border_radius="9px",
+                cursor="pointer", transition="all 0.15s",
+                _hover={"background": rx.cond(
+                    FragmosState.page_mode == "fragmos", ACCENT, PANEL_HVR,
+                )},
+                on_click=FragmosState.set_page_mode("fragmos"),
+            ),
+            rx.button(
+                rx.icon("boxes", size=13,
+                        color=rx.cond(FragmosState.page_mode == "klassis", "white", MUTED)),
+                rx.text("Классы", font_size="12px", font_weight="600",
+                        color=rx.cond(FragmosState.page_mode == "klassis", "white", MUTED)),
+                display="flex", align_items="center", gap="5px",
+                flex="1", justify_content="center",
+                padding="7px 10px",
+                background=rx.cond(
+                    FragmosState.page_mode == "klassis",
+                    ACCENT, "transparent",
+                ),
+                border="none", border_radius="9px",
+                cursor="pointer", transition="all 0.15s",
+                _hover={"background": rx.cond(
+                    FragmosState.page_mode == "klassis", ACCENT, PANEL_HVR,
+                )},
+                on_click=FragmosState.set_page_mode("klassis"),
+            ),
+            display="flex", gap="4px", padding="10px 10px 8px",
+            background=f"rgba(255,255,255,0.03)",
+            border_radius="12px", margin="10px 10px 6px",
+            border=f"1px solid {BORDER}",
+        ),
         # ── Top bar ───────────────────────────────────────────────────────────
         rx.box(
             rx.text("История", font_size="13px", font_weight="600", color=TEXT),
             display="flex", align_items="center",
-            padding="16px 12px 12px",
+            padding="8px 12px 8px",
         ),
         # ── New button ────────────────────────────────────────────────────────
         rx.box(
-            rx.button(
-                rx.icon("plus", size=15, color="white"),
-                rx.text("Новая блок-схема", font_size="13px",
-                        font_weight="600", color="white"),
-                display="flex", align_items="center",
-                justify_content="center", gap="7px",
-                width="100%", padding="10px 14px",
-                background=ACCENT, border_radius="12px", border="none",
-                cursor="pointer",
-                box_shadow="0 2px 10px rgba(59,130,246,0.28)",
-                transition="all 0.15s",
-                _hover={"background": ACCENT_HVR,
-                        "box_shadow": "0 4px 16px rgba(59,130,246,0.38)"},
-                _active={"transform": "scale(0.98)"},
-                on_click=FragmosState.on_new_chat_click,
+            rx.cond(
+                FragmosState.page_mode == "fragmos",
+                rx.button(
+                    rx.icon("plus", size=15, color="white"),
+                    rx.text("Новая блок-схема", font_size="13px",
+                            font_weight="600", color="white"),
+                    display="flex", align_items="center",
+                    justify_content="center", gap="7px",
+                    width="100%", padding="10px 14px",
+                    background=ACCENT, border_radius="12px", border="none",
+                    cursor="pointer",
+                    box_shadow="0 2px 10px rgba(59,130,246,0.28)",
+                    transition="all 0.15s",
+                    _hover={"background": ACCENT_HVR,
+                            "box_shadow": "0 4px 16px rgba(59,130,246,0.38)"},
+                    _active={"transform": "scale(0.98)"},
+                    on_click=FragmosState.on_new_chat_click,
+                ),
+                rx.button(
+                    rx.icon("plus", size=15, color="white"),
+                    rx.text("Новая диаграмма", font_size="13px",
+                            font_weight="600", color="white"),
+                    display="flex", align_items="center",
+                    justify_content="center", gap="7px",
+                    width="100%", padding="10px 14px",
+                    background=ACCENT, border_radius="12px", border="none",
+                    cursor="pointer",
+                    box_shadow="0 2px 10px rgba(59,130,246,0.28)",
+                    transition="all 0.15s",
+                    _hover={"background": ACCENT_HVR,
+                            "box_shadow": "0 4px 16px rgba(59,130,246,0.38)"},
+                    _active={"transform": "scale(0.98)"},
+                    on_click=KlassisState.on_new_click,
+                ),
             ),
             padding="0 12px 10px",
         ),
         # ── Chat list ─────────────────────────────────────────────────────────
         rx.box(
             rx.cond(
-                FragmosState.chats.length() > 0,
-                rx.box(
-                    rx.foreach(FragmosState.chats, _chat_item),
-                    display="flex", flex_direction="column", gap="2px",
-                    padding="0 6px",
+                FragmosState.page_mode == "fragmos",
+                rx.cond(
+                    FragmosState.chats.length() > 0,
+                    rx.box(
+                        rx.foreach(FragmosState.chats, _chat_item),
+                        display="flex", flex_direction="column", gap="2px",
+                        padding="0 6px",
+                    ),
+                    rx.box(
+                        rx.icon("layout-template", size=28, color=MUTED2),
+                        rx.text("У вас пока нет схем",
+                                font_size="13px", color=MUTED,
+                                text_align="center", margin_top="10px"),
+                        rx.text("Создайте первую блок-схему",
+                                font_size="11px", color=MUTED2,
+                                text_align="center", margin_top="4px"),
+                        display="flex", flex_direction="column",
+                        align_items="center", justify_content="center",
+                        padding="32px 16px", flex="1",
+                    ),
                 ),
-                # Empty schemes
-                rx.box(
-                    rx.icon("layout-template", size=28, color=MUTED2),
-                    rx.text("У вас пока нет схем",
-                            font_size="13px", color=MUTED,
-                            text_align="center", margin_top="10px"),
-                    rx.text("Создайте первую блок-схему",
-                            font_size="11px", color=MUTED2,
-                            text_align="center", margin_top="4px"),
-                    display="flex", flex_direction="column",
-                    align_items="center", justify_content="center",
-                    padding="32px 16px", flex="1",
+                rx.cond(
+                    KlassisState.chats.length() > 0,
+                    rx.box(
+                        rx.foreach(KlassisState.chats, _klassis_chat_item),
+                        display="flex", flex_direction="column", gap="2px",
+                        padding="0 6px",
+                    ),
+                    rx.box(
+                        rx.icon("boxes", size=28, color=MUTED2),
+                        rx.text("Нет диаграмм классов",
+                                font_size="13px", color=MUTED,
+                                text_align="center", margin_top="10px"),
+                        rx.text("Создайте первую диаграмму",
+                                font_size="11px", color=MUTED2,
+                                text_align="center", margin_top="4px"),
+                        display="flex", flex_direction="column",
+                        align_items="center", justify_content="center",
+                        padding="32px 16px", flex="1",
+                    ),
                 ),
             ),
             flex="1", overflow_y="auto", css=SCROLLBAR_CSS,
@@ -1390,6 +1517,364 @@ def delete_confirm() -> rx.Component:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# KLASSIS — empty state (code input)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _klassis_empty_state() -> rx.Component:
+    return rx.box(
+        # Header
+        rx.box(
+            rx.text("Диаграмма классов", font_size="15px",
+                    font_weight="600", color=TEXT),
+            height="52px", padding="0 24px",
+            display="flex", align_items="center",
+            background=HEADER_BG, backdrop_filter="blur(20px)",
+            border_bottom=f"1px solid {BORDER}",
+        ),
+        rx.box(
+            rx.cond(
+                KlassisState.is_generating,
+                # Loading
+                rx.box(
+                    rx.box(
+                        rx.box(
+                            width="56px", height="56px", border_radius="50%",
+                            border="3px solid rgba(59,130,246,0.10)",
+                            border_top=f"3px solid {ACCENT}",
+                            position="absolute", top="0", left="0",
+                            style={"animation": "fspin 0.9s linear infinite"},
+                        ),
+                        rx.box(
+                            rx.icon("boxes", size=18, color=ACCENT),
+                            position="absolute", top="50%", left="50%",
+                            transform="translate(-50%,-50%)",
+                        ),
+                        position="relative", width="56px", height="56px",
+                        margin_bottom="18px",
+                    ),
+                    rx.text("Генерация диаграммы...", font_size="15px",
+                            font_weight="600", color=TEXT),
+                    rx.text("Анализируем классы и связи",
+                            font_size="12px", color=MUTED, margin_top="6px"),
+                    display="flex", flex_direction="column",
+                    align_items="center", justify_content="center",
+                    height="100%", min_height="360px",
+                ),
+                # Input form
+                rx.box(
+                    # Hero
+                    rx.box(
+                        rx.icon("boxes", size=46, color="white"),
+                        width="92px", height="92px",
+                        background=f"linear-gradient(135deg,{ACCENT},{ACCENT2})",
+                        border_radius="26px",
+                        display="flex", align_items="center", justify_content="center",
+                        box_shadow=f"0 20px 60px {ACCENT_GLOW},0 8px 28px rgba(59,130,246,0.22)",
+                        margin_bottom="22px",
+                    ),
+                    rx.text("Диаграмма классов",
+                            font_size="30px", font_weight="700", color=TEXT,
+                            letter_spacing="-0.5px", margin_bottom="10px"),
+                    rx.text(
+                        "Вставьте заголовочный файл .h / .hpp (C++) или .cs (C#).\n"
+                        "Классы, поля, методы и связи наследования — автоматически.",
+                        font_size="15px", color=MUTED, text_align="center",
+                        line_height="1.6", white_space="pre-line", margin_bottom="28px",
+                    ),
+                    # Error
+                    rx.cond(
+                        KlassisState.generation_error != "",
+                        rx.box(
+                            rx.box(
+                                rx.icon("circle-x", size=15, color=DANGER),
+                                rx.text("Ошибка", font_size="13px",
+                                        font_weight="600", color=DANGER),
+                                display="flex", align_items="center", gap="7px",
+                            ),
+                            rx.text(
+                                KlassisState.generation_error,
+                                font_size="12px", color="rgba(248,113,113,0.85)",
+                                line_height="1.5", margin_top="6px",
+                                font_family=MONO, word_break="break-all",
+                            ),
+                            width="100%", max_width="600px",
+                            padding="12px 16px", margin_bottom="14px",
+                            background=DANGER_BG,
+                            border=f"1px solid rgba(248,113,113,0.30)",
+                            border_radius="14px",
+                        ),
+                        rx.box(),
+                    ),
+                    # Input card
+                    rx.box(
+                        # Card header: language selector
+                        rx.box(
+                            _icon_box("code-2"),
+                            rx.box(
+                                rx.text("Вставьте код", font_size="14px",
+                                        font_weight="600", color=TEXT),
+                                rx.text("Заголовочный файл или класс",
+                                        font_size="11px", color=MUTED, margin_top="1px"),
+                            ),
+                            rx.box(flex="1"),
+                            # Language toggle
+                            rx.box(
+                                rx.foreach(
+                                    LANGUAGES,
+                                    lambda lang: rx.button(
+                                        lang,
+                                        font_size="11px", font_weight="700",
+                                        font_family=MONO,
+                                        color=rx.cond(
+                                            KlassisState.selected_language == lang,
+                                            "white", MUTED,
+                                        ),
+                                        background=rx.cond(
+                                            KlassisState.selected_language == lang,
+                                            ACCENT, "transparent",
+                                        ),
+                                        border=rx.cond(
+                                            KlassisState.selected_language == lang,
+                                            "none", f"1px solid {BORDER}",
+                                        ),
+                                        padding="4px 12px",
+                                        border_radius="8px",
+                                        cursor="pointer",
+                                        transition="all 0.15s",
+                                        on_click=KlassisState.set_language(lang),
+                                    ),
+                                ),
+                                display="flex", gap="4px",
+                            ),
+                            display="flex", align_items="center", gap="11px",
+                            padding="14px 18px",
+                            border_bottom=f"1px solid {BORDER}",
+                            background="linear-gradient(180deg,rgba(255,255,255,0.03),transparent)",
+                            border_radius="20px 20px 0 0",
+                        ),
+                        # Textarea
+                        rx.text_area(
+                            value=KlassisState.code_input,
+                            on_change=KlassisState.set_code_input,
+                            placeholder=(
+                                "class MainWindow : public QMainWindow {\n"
+                                "public:\n"
+                                "    explicit MainWindow(QWidget *parent = nullptr);\n"
+                                "    void updateUI();\n"
+                                "private:\n"
+                                "    Database *db;\n"
+                                "    int counter;\n"
+                                "};"
+                            ),
+                            min_height="200px", padding="16px 18px",
+                            background="transparent", border="none", outline="none",
+                            font_family=MONO, font_size="13px", color=TEXT,
+                            resize="none", width="100%", line_height="1.65",
+                            box_shadow="none",
+                            css={"::placeholder": {"color": MUTED2},
+                                 "&:focus": {"outline": "none", "box_shadow": "none"}},
+                        ),
+                        # Submit + cost
+                        rx.box(
+                            rx.button(
+                                rx.icon("boxes", size=17, color="white"),
+                                rx.text("Создать диаграмму", font_size="15px",
+                                        font_weight="600", color="white"),
+                                display="flex", align_items="center",
+                                justify_content="center", gap="9px",
+                                flex="1", padding="13px 20px",
+                                background=rx.cond(
+                                    KlassisState.can_submit,
+                                    ACCENT, "rgba(255,255,255,0.07)",
+                                ),
+                                border_radius="12px", border="none",
+                                cursor=rx.cond(KlassisState.can_submit,
+                                               "pointer", "not-allowed"),
+                                box_shadow=rx.cond(
+                                    KlassisState.can_submit,
+                                    "0 4px 18px rgba(59,130,246,0.32)", "none",
+                                ),
+                                transition="all 0.15s",
+                                _hover={"background": rx.cond(
+                                    KlassisState.can_submit,
+                                    ACCENT_HVR, "rgba(255,255,255,0.07)",
+                                )},
+                                _active={"transform": "scale(0.98)"},
+                                on_click=KlassisState.on_submit,
+                            ),
+                            rx.box(
+                                rx.icon("coins", size=12, color=MUTED),
+                                rx.text("30 токенов", font_size="11px",
+                                        font_weight="600", color=MUTED),
+                                display="flex", align_items="center", gap="4px",
+                                padding="4px 10px",
+                                background=PANEL,
+                                border=f"1px solid {BORDER}",
+                                border_radius="8px",
+                                flex_shrink="0",
+                            ),
+                            display="flex", align_items="center", gap="10px",
+                            padding="12px 16px",
+                            border_top=f"1px solid {BORDER}",
+                            background="linear-gradient(0deg,rgba(255,255,255,0.02),transparent)",
+                            border_radius="0 0 20px 20px",
+                        ),
+                        background=PANEL,
+                        border_radius="20px",
+                        border=f"1px solid {BORDER}",
+                        box_shadow="0 8px 40px rgba(0,0,0,0.38)",
+                        overflow="hidden",
+                        width="100%", max_width="600px",
+                        transition="all 0.2s",
+                        _hover={"border": f"1px solid {BORDER_BLUE}",
+                                "box_shadow": "0 12px 48px rgba(59,130,246,0.10)"},
+                    ),
+                    # Balance
+                    rx.box(
+                        rx.icon("coins", size=11, color=MUTED),
+                        rx.text(KlassisState.balance_label, font_size="11px",
+                                font_weight="500", color=MUTED),
+                        display="flex", align_items="center", gap="5px",
+                        margin_top="12px",
+                    ),
+                    display="flex", flex_direction="column", align_items="center",
+                    padding="44px 24px 32px", max_width="680px", width="100%",
+                ),
+            ),
+            flex="1", display="flex", align_items="flex-start",
+            justify_content="center", overflow_y="auto",
+        ),
+        flex="1", display="flex", flex_direction="column",
+        height="100vh", overflow="hidden",
+        padding_top="56px",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# KLASSIS — diagram viewer
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _klassis_diagram_viewer() -> rx.Component:
+    chat = KlassisState.selected_chat
+    return rx.box(
+        # Header
+        rx.box(
+            rx.text(chat["name"], font_size="15px",
+                    font_weight="600", color=TEXT),
+            rx.box(flex="1"),
+            _hdr_btn("download", "Скачать", KlassisState.on_download),
+            rx.button(
+                rx.icon("trash-2", size=14, color=DANGER),
+                width="34px", height="34px",
+                display="flex", align_items="center", justify_content="center",
+                background=DANGER_BG,
+                border=f"1px solid rgba(248,113,113,0.25)",
+                border_radius="10px", cursor="pointer",
+                transition="all 0.15s",
+                _hover={"background": "rgba(248,113,113,0.22)"},
+                _active={"transform": "scale(0.97)"},
+                on_click=KlassisState.on_request_delete(chat["id"]),
+            ),
+            display="flex", align_items="center", gap="6px",
+            height="52px", padding="0 16px",
+            background=HEADER_BG, backdrop_filter="blur(20px)",
+            border_bottom=f"1px solid {BORDER}",
+        ),
+        # Sub-header
+        rx.box(
+            rx.icon("boxes", size=12, color=MUTED),
+            rx.text("ДИАГРАММА КЛАССОВ", font_size="10px", font_weight="700",
+                    color=MUTED, letter_spacing="0.1em"),
+            rx.box(flex="1"),
+            rx.box(
+                rx.icon("coins", size=11, color=ACCENT),
+                rx.text(f"Баланс: {AuthState.tokens_left} токенов", font_size="11px",
+                        font_weight="600", color=ACCENT),
+                display="flex", align_items="center", gap="4px",
+                padding="3px 9px",
+                background="rgba(59,130,246,0.10)",
+                border=f"1px solid rgba(59,130,246,0.22)",
+                border_radius="8px",
+            ),
+            display="flex", align_items="center", gap="6px",
+            height="36px", padding="0 20px",
+            background="rgba(255,255,255,0.02)",
+            border_bottom=f"1px solid {BORDER}",
+        ),
+        # draw.io area
+        rx.box(
+            rx.box(
+                rx.el.iframe(
+                    src=KlassisState.diagram_src,
+                    width="100%", height="100%",
+                    style={"border": "none", "background": "#141820"},
+                    allow="fullscreen",
+                ),
+                background=PANEL,
+                border_radius="16px",
+                border=f"1px solid {BORDER}",
+                box_shadow="0 8px 40px rgba(0,0,0,0.32)",
+                width="100%", height="100%", overflow="hidden",
+            ),
+            flex="1", padding="20px",
+            display="flex", flex_direction="column",
+            overflow="hidden",
+        ),
+        # Klassis delete confirm
+        rx.cond(
+            KlassisState.delete_confirm_open,
+            rx.box(
+                rx.box(
+                    rx.box(
+                        rx.icon("trash-2", size=22, color=DANGER),
+                        width="48px", height="48px",
+                        background=DANGER_BG, border_radius="50%",
+                        display="flex", align_items="center",
+                        justify_content="center", margin_bottom="14px",
+                    ),
+                    rx.text("Удалить диаграмму?", font_size="18px",
+                            font_weight="700", color=TEXT,
+                            text_align="center", margin_bottom="6px"),
+                    rx.text("Это действие нельзя отменить",
+                            font_size="13px", color=MUTED, text_align="center",
+                            margin_bottom="20px"),
+                    rx.button(
+                        "Удалить", font_size="15px", font_weight="600",
+                        color="white", width="100%", padding="13px",
+                        background="linear-gradient(135deg,#ef4444,#dc2626)",
+                        border="none", border_radius="14px", cursor="pointer",
+                        margin_bottom="8px",
+                        on_click=KlassisState.on_confirm_delete,
+                    ),
+                    rx.button(
+                        "Отмена", font_size="15px", font_weight="500",
+                        color=TEXT, width="100%", padding="13px",
+                        background=PANEL, border=f"1px solid {BORDER}",
+                        border_radius="14px", cursor="pointer",
+                        on_click=KlassisState.on_cancel_delete,
+                    ),
+                    display="flex", flex_direction="column", align_items="center",
+                    padding="28px 24px",
+                    background="rgba(16,18,28,0.98)",
+                    border_radius="22px", border=f"1px solid {BORDER}",
+                    box_shadow="0 32px 80px rgba(0,0,0,0.70)",
+                    width="100%", max_width="320px",
+                    on_click=rx.stop_propagation,
+                ),
+                position="fixed", top="0", left="0",
+                width="100vw", height="100vh", z_index="70",
+                background="rgba(0,0,0,0.60)", backdrop_filter="blur(8px)",
+                display="flex", align_items="center", justify_content="center",
+                on_click=KlassisState.on_cancel_delete,
+            ),
+        ),
+        flex="1", display="flex", flex_direction="column",
+        height="100vh", overflow="hidden",
+        padding_top="56px",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # PAGE
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -1420,8 +1905,12 @@ def fragmos_page() -> rx.Component:
             FragmosState.is_authenticated,
             rx.box(
                 sidebar(),
-                rx.cond(FragmosState.has_selected, diagram_viewer(), empty_state()),
-                # Modals (portals)
+                rx.cond(
+                    FragmosState.page_mode == "fragmos",
+                    rx.cond(FragmosState.has_selected, diagram_viewer(), empty_state()),
+                    rx.cond(KlassisState.has_selected, _klassis_diagram_viewer(), _klassis_empty_state()),
+                ),
+                # Modals (fragmos only)
                 code_modal(),
                 bug_modal(),
                 settings_modal(),

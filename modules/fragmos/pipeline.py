@@ -91,7 +91,7 @@ async def run_with_token_check(
     # ── Шаг 0: оценка и проверка токенов ─────────────────────────────────
     if token_budget is not None:
         print(f"[{step}/3] Оценка токенов...")
-        estimated = await api.estimate_tokens_from_text(code)
+        estimated = await api.estimate_tokens_from_text(code, prompt_key=model_id)
         required = (estimated // 100) * TOKEN_MULTIPLIER + TOKEN_BUFFER
         print(f"      Оценка: ~{estimated} яндекс-токенов "
               f"-> ~{(estimated // 100) * TOKEN_MULTIPLIER} к списанию")

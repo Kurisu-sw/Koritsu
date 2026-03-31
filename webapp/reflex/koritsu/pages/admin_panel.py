@@ -906,6 +906,69 @@ def tab_bar() -> rx.Component:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  LOGIN FORM
+# ══════════════════════════════════════════════════════════════════════════════
+
+def login_form() -> rx.Component:
+    return rx.center(
+        rx.vstack(
+            corner_brackets(
+                rx.vstack(
+                    rx.hstack(
+                        rx.box(width="3px", height="22px", background=DANGER),
+                        rx.box(width="3px", height="22px", background=ACCENT),
+                        rx.box(width="3px", height="22px", background=CYAN),
+                        gap="2px",
+                    ),
+                    rx.text("ADMIN ACCESS", font_size="18px", font_weight="700",
+                            letter_spacing="4px", color=TEXT, font_family=SANS),
+                    rx.text("RESTRICTED — AUTHORISED ONLY", font_size="9px",
+                            letter_spacing="2px", color=DANGER, font_family=MONO),
+                    rx.box(width="100%", height="1px", background=BORDER, margin_y="16px"),
+                    rx.vstack(
+                        rx.text("LOGIN", **{**LABEL_STYLE}),
+                        rx.input(
+                            value=AdminState.login_input,
+                            on_change=AdminState.set_login_input,
+                            placeholder="admin login...",
+                            **INPUT_STYLE,
+                        ),
+                        gap="4px", width="100%",
+                    ),
+                    rx.vstack(
+                        rx.text("PASSWORD", **{**LABEL_STYLE}),
+                        rx.input(
+                            value=AdminState.password_input,
+                            on_change=AdminState.set_password_input,
+                            placeholder="password...",
+                            type="password",
+                            on_key_down=lambda e: rx.cond(e == "Enter", AdminState.admin_login, None),
+                            **INPUT_STYLE,
+                        ),
+                        gap="4px", width="100%",
+                    ),
+                    rx.cond(
+                        AdminState.login_error != "",
+                        rx.text(AdminState.login_error, font_size="11px",
+                                color=DANGER, font_family=MONO),
+                    ),
+                    save_button("AUTHENTICATE", AdminState.admin_login),
+                    gap="14px", padding="32px", width="360px",
+                    align_items="flex_start",
+                ),
+                background=PANEL,
+                border=f"1px solid {BORDER_BRIGHT}",
+                box_shadow=f"0 0 60px rgba(0,0,0,0.8), 0 0 40px {ACCENT_GLOW}",
+            ),
+            align_items="center",
+        ),
+        min_height="100vh",
+        position="relative",
+        z_index="10",
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  MAIN PAGE
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -913,63 +976,82 @@ def admin_panel_page() -> rx.Component:
     return rx.box(
         animated_bg(),
         header(show_nav_links=True),
-        rx.vstack(
-            # Header
-            rx.hstack(
+        rx.cond(
+            AdminState.is_admin_logged_in,
+            # ── Authenticated panel ──────────────────────────────────────
+            rx.vstack(
+                # Header
                 rx.hstack(
                     rx.hstack(
-                        rx.box(width="3px", height="28px", background=DANGER),
-                        rx.box(width="3px", height="28px", background=ACCENT),
-                        rx.box(width="3px", height="28px", background=CYAN),
-                        gap="2px",
+                        rx.hstack(
+                            rx.box(width="3px", height="28px", background=DANGER),
+                            rx.box(width="3px", height="28px", background=ACCENT),
+                            rx.box(width="3px", height="28px", background=CYAN),
+                            gap="2px",
+                        ),
+                        rx.vstack(
+                            rx.text("CONTROL CENTER", font_size="20px", font_weight="700",
+                                    letter_spacing="3px", color=TEXT, font_family=SANS),
+                            rx.text("ADMIN PANEL // RESTRICTED ACCESS", font_size="9px",
+                                    letter_spacing="2px", color=DANGER, font_family=MONO),
+                            gap="0",
+                        ),
+                        align_items="center", gap="14px",
                     ),
-                    rx.vstack(
-                        rx.text("CONTROL CENTER", font_size="20px", font_weight="700",
-                                letter_spacing="3px", color=TEXT, font_family=SANS),
-                        rx.text("ADMIN PANEL // RESTRICTED ACCESS", font_size="9px",
-                                letter_spacing="2px", color=DANGER, font_family=MONO),
-                        gap="0",
+                    rx.spacer(),
+                    rx.box(
+                        rx.text("LOGOUT", font_size="10px", letter_spacing="1.5px",
+                                font_weight="700", color=TEXT_DIM, font_family=SANS),
+                        padding="8px 16px", border=f"1px solid {BORDER}",
+                        cursor="pointer", transition="all 0.2s",
+                        _hover={"background": ACCENT_GLOW, "border_color": ACCENT, "color": ACCENT},
+                        on_click=AdminState.admin_logout,
                     ),
-                    align_items="center", gap="14px",
+                    width="100%", padding="20px 28px", align_items="center",
+                    position="relative", z_index="10",
                 ),
-                width="100%", padding="20px 28px", align_items="center",
-                position="relative", z_index="10",
-            ),
-            # Warning banner
-            rx.hstack(
-                rx.icon("triangle-alert", size=16, color=ACCENT),
-                rx.text(
-                    "ADMIN ACCESS — DO NOT EXPOSE THIS URL IN PRODUCTION.",
-                    font_size="10px", letter_spacing="1px", color=ACCENT,
-                    font_family=MONO, font_weight="600",
+                # Warning banner
+                rx.hstack(
+                    rx.icon("triangle-alert", size=16, color=ACCENT),
+                    rx.text(
+                        "ADMIN ACCESS — DO NOT EXPOSE THIS URL IN PRODUCTION.",
+                        font_size="10px", letter_spacing="1px", color=ACCENT,
+                        font_family=MONO, font_weight="600",
+                    ),
+                    padding="10px 20px", background="rgba(240,192,64,0.06)",
+                    border=f"1px solid {BORDER_BRIGHT}", align_items="center",
+                    gap="10px", width="100%", margin_x="28px",
+                    position="relative", z_index="10",
                 ),
-                padding="10px 20px", background="rgba(240,192,64,0.06)",
-                border=f"1px solid {BORDER_BRIGHT}", align_items="center",
-                gap="10px", width="100%", margin_x="28px",
-                position="relative", z_index="10",
+                # Tabs
+                rx.box(
+                    tab_bar(),
+                    padding="0 28px", width="100%",
+                    position="relative", z_index="10",
+                ),
+                # Content
+                rx.box(
+                    rx.match(
+                        AdminState.active_tab,
+                        ("topology", topology_section()),
+                        ("balancer", balancer_section()),
+                        ("users", users_section()),
+                        topology_section(),
+                    ),
+                    padding="20px 28px 40px 28px",
+                    width="100%",
+                    position="relative",
+                    z_index="10",
+                ),
+                width="100%", min_height="100vh", gap="0",
+                padding_top="56px",
             ),
-            # Tabs
+            # ── Login form ───────────────────────────────────────────────
             rx.box(
-                tab_bar(),
-                padding="0 28px", width="100%",
-                position="relative", z_index="10",
-            ),
-            # Content
-            rx.box(
-                rx.match(
-                    AdminState.active_tab,
-                    ("topology", topology_section()),
-                    ("balancer", balancer_section()),
-                    ("users", users_section()),
-                    topology_section(),
-                ),
-                padding="20px 28px 40px 28px",
+                login_form(),
+                padding_top="56px",
                 width="100%",
-                position="relative",
-                z_index="10",
             ),
-            width="100%", min_height="100vh", gap="0",
-            padding_top="56px",
         ),
         detail_modal(),
         background=BG, min_height="100vh",

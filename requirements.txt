@@ -1,4 +1,7 @@
 bcrypt
+tree-sitter
+tree-sitter-cpp
+tree-sitter-c-sharp
 colorama
 docxtpl
 python-docx
@@ -6,6 +9,8 @@ drawpyo
 openai
 reflex
 fastapi
+uvicorn
 python-dotenv
 httpx
 Pillow
+yandex_ai_studio_sdk

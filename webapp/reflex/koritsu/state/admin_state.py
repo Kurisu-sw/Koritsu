@@ -9,6 +9,13 @@ REFLEX_URL = os.getenv("REFLEX_URL", "http://localhost:3000")
 
 
 class AdminState(rx.State):
+    # ── Auth ──────────────────────────────────────────────────────────────
+    is_admin_logged_in: bool = False
+    admin_token: str = ""
+    login_input: str = ""
+    password_input: str = ""
+    login_error: str = ""
+
     # ── Active tab ────────────────────────────────────────────────────────
     active_tab: str = "topology"  # "topology", "balancer", "users"
 
@@ -85,6 +92,43 @@ class AdminState(rx.State):
     def toggle_delete_confirm(self):
         self.show_delete_confirm = not self.show_delete_confirm
 
+    def set_login_input(self, v: str):
+        self.login_input = v
+
+    def set_password_input(self, v: str):
+        self.password_input = v
+
+    async def admin_login(self):
+        self.login_error = ""
+        if not self.login_input.strip() or not self.password_input.strip():
+            self.login_error = "Enter login and password"
+            return
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    f"{API}/admin/login",
+                    json={"login": self.login_input, "password": self.password_input},
+                    timeout=5,
+                )
+                data = resp.json()
+        except Exception as e:
+            self.login_error = f"Connection error: {e}"
+            return
+        if "error" in data:
+            self.login_error = data["error"]
+            return
+        self.admin_token = data["token"]
+        self.is_admin_logged_in = True
+        self.login_input = ""
+        self.password_input = ""
+
+    def admin_logout(self):
+        self.is_admin_logged_in = False
+        self.admin_token = ""
+        self.login_input = ""
+        self.password_input = ""
+        self.login_error = ""
+
     # ── Search ───────────────────────────────────────────────────────────
 
     @staticmethod
@@ -132,6 +176,7 @@ class AdminState(rx.State):
                 resp = await client.get(
                     f"{API}/admin/search",
                     params={"username": username},
+                    headers={"x-admin-token": self.admin_token},
                     timeout=5,
                 )
                 data = resp.json()
@@ -263,6 +308,7 @@ class AdminState(rx.State):
                 resp = await client.patch(
                     f"{API}/admin/user/{self.user_uuid}/sub-level",
                     json={"item": "sub_level", "newitem": self.edit_sub_level},
+                    headers={"x-admin-token": self.admin_token},
                     timeout=5,
                 )
                 data = resp.json()
@@ -285,6 +331,7 @@ class AdminState(rx.State):
                 resp = await client.post(
                     f"{API}/admin/user/{self.user_uuid}/reset-password",
                     json={"new_password": self.edit_password},
+                    headers={"x-admin-token": self.admin_token},
                     timeout=5,
                 )
                 data = resp.json()
@@ -311,6 +358,7 @@ class AdminState(rx.State):
                 resp = await client.post(
                     f"{API}/admin/user/{self.user_uuid}/ban",
                     json={"reason": self.ban_reason_input, "timeout_minutes": timeout},
+                    headers={"x-admin-token": self.admin_token},
                     timeout=5,
                 )
                 data = resp.json()
@@ -331,6 +379,7 @@ class AdminState(rx.State):
             async with httpx.AsyncClient() as client:
                 resp = await client.post(
                     f"{API}/admin/user/{self.user_uuid}/unban",
+                    headers={"x-admin-token": self.admin_token},
                     timeout=5,
                 )
                 data = resp.json()
@@ -351,6 +400,7 @@ class AdminState(rx.State):
             async with httpx.AsyncClient() as client:
                 resp = await client.delete(
                     f"{API}/admin/user/{self.user_uuid}",
+                    headers={"x-admin-token": self.admin_token},
                     timeout=5,
                 )
                 data = resp.json()
@@ -388,7 +438,11 @@ class AdminState(rx.State):
         # DB — dedicated health endpoint
         try:
             async with httpx.AsyncClient() as client:
-                resp = await client.get(f"{API}/admin/health", timeout=3)
+                resp = await client.get(
+                    f"{API}/admin/health",
+                    headers={"x-admin-token": self.admin_token},
+                    timeout=3,
+                )
                 data = resp.json()
             if data.get("status") == "ok":
                 self.topo_db_status = "online"

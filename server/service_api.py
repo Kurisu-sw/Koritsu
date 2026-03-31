@@ -84,12 +84,12 @@ async def _fragmos_handler(payload: dict) -> dict:
 
     ai_json = ""
     try:
+        effective_budget = (token_budget - token_spent) if token_budget is not None else None
         result_path, charged, cost_rub, ai_json = await pipeline_run(
             code_path, xml_path,
             cfg_overrides=cfg,
             model_id=model_id,
-            token_budget=token_budget,
-            token_spent=token_spent,
+            token_budget=effective_budget,
         )
     except Exception as exc:
         # Если pipeline упал (например builder не смог парсить JSON),
@@ -129,6 +129,8 @@ async def _fragmos_handler(payload: dict) -> dict:
 
 balancer.register_handler("fragmos", _fragmos_handler)
 
+_KLASSIS_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), "../modules/klassis"))
+
 
 class EstimateRequest(BaseModel):
     code: str
@@ -145,6 +147,59 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 app.include_router(balancer_router)
 DB_PATH = os.getenv("DATABASE_NAME", "files/koritsu.db")
+
+
+class KlassisRequest(BaseModel):
+    code:      str
+    language:  str = "C++"
+    user_uuid: str
+
+
+@app.post("/klassis/generate")
+async def klassis_generate(data: KlassisRequest):
+    if not data.code.strip():
+        return {"error": "Пустой код"}
+    if not _valid_uuid(data.user_uuid):
+        return {"error": "Invalid UUID"}
+
+    if _KLASSIS_DIR not in sys.path:
+        sys.path.insert(0, _KLASSIS_DIR)
+
+    for _mod in ("extractor", "builder"):
+        sys.modules.pop(_mod, None)
+
+    try:
+        from extractor import extract_cpp, extract_cs  # type: ignore
+        from builder   import build_xml                # type: ignore
+    except ImportError as e:
+        return {"error": f"Модуль klassis не найден: {e}"}
+
+    try:
+        classes = extract_cpp(data.code) if data.language == "C++" else extract_cs(data.code)
+    except ImportError as e:
+        return {"error": str(e)}
+    except Exception as e:
+        return {"error": f"Ошибка парсинга: {e}"}
+
+    if not classes:
+        return {"error": "Классы не найдены. Вставьте заголовочный файл (.h/.hpp) или определения классов."}
+
+    try:
+        xml_content = build_xml(classes)
+    except Exception as e:
+        return {"error": f"Ошибка генерации XML: {e}"}
+
+    user_dir = f"files/users/{data.user_uuid}/klassis"
+    os.makedirs(user_dir, exist_ok=True)
+    slug  = str(uuid.uuid4())[:8]
+    fname = f"Классы_{slug}.xml"
+    try:
+        with open(os.path.join(user_dir, fname), "w", encoding="utf-8") as f:
+            f.write(xml_content)
+    except Exception as e:
+        return {"error": f"Ошибка сохранения: {e}"}
+
+    return {"xml_filename": fname, "xml_content": xml_content, "class_count": len(classes)}
 
 
 @app.post("/fragmos/estimate")
@@ -344,6 +399,7 @@ def register(data: RegisterRequest):
             user_folder = f"files/users/{user_id}"
             print(f"[register] creating folders: {os.path.abspath(user_folder)}")
             os.makedirs(f"{user_folder}/fragmos", exist_ok=True)
+            os.makedirs(f"{user_folder}/klassis", exist_ok=True)
             os.makedirs(f"{user_folder}/engrafo/templates", exist_ok=True)
             os.makedirs(f"{user_folder}/engrafo/reports", exist_ok=True)
             print(f"[register] folders created, generating icon...")
@@ -407,7 +463,7 @@ def get_user_data(uuid: str):
 def get_user_folder_files(uuid: str, folder: str):
     if not _valid_uuid(uuid):
         return {"error": "Invalid UUID"}
-    if folder not in ("fragmos", "engrafo"):
+    if folder not in ("fragmos", "engrafo", "klassis"):
         return {"error": "Unable to get folder"}
     if folder == "engrafo":
         return {"error": "Service not available"}
@@ -430,9 +486,12 @@ async def upload_avatar(uuid: str, file: UploadFile = File(...)):
     if row is None:
         return {"error": "User not exist"}
 
-    # Проверяем формат — только PNG
-    if file.content_type != "image/png" or not (file.filename or "").lower().endswith(".png"):
-        return {"error": "Only PNG files are allowed"}
+    # Проверяем формат — PNG или JPEG
+    allowed_types = {"image/png", "image/jpeg", "image/jpg"}
+    allowed_exts = {".png", ".jpg", ".jpeg"}
+    fname_lower = (file.filename or "").lower()
+    if file.content_type not in allowed_types or not any(fname_lower.endswith(e) for e in allowed_exts):
+        return {"error": "Only PNG or JPEG files are allowed"}
 
     contents = await file.read()
     if len(contents) > MAX_AVATAR_SIZE:
@@ -442,8 +501,9 @@ async def upload_avatar(uuid: str, file: UploadFile = File(...)):
     os.makedirs(user_folder, exist_ok=True)
     icon_path = os.path.join(user_folder, "icon.png")
 
-    with open(icon_path, "wb") as f:
-        f.write(contents)
+    import io
+    img = Image.open(io.BytesIO(contents)).convert("RGBA")
+    img.save(icon_path, format="PNG")
 
     conn = get_db()
     conn.execute("UPDATE users SET icon = ? WHERE uuid = ?", (icon_path, uuid))
@@ -754,6 +814,7 @@ def register_with_referral(ref_uuid: str, data: RegisterRequest):
         try:
             user_folder = f"files/users/{user_id}"
             os.makedirs(f"{user_folder}/fragmos", exist_ok=True)
+            os.makedirs(f"{user_folder}/klassis", exist_ok=True)
             os.makedirs(f"{user_folder}/engrafo/templates", exist_ok=True)
             os.makedirs(f"{user_folder}/engrafo/reports", exist_ok=True)
             icon_path = generate_icon(user_id, user_folder)

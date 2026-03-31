@@ -1329,7 +1329,7 @@ def _avatar_upload_modal() -> rx.Component:
                                     rx.cond(
                                         ProfileState.avatar_preview_url != "",
                                         "Выбрать другой файл",
-                                        "Перетащите PNG сюда или кликните",
+                                        "Перетащите PNG или JPEG сюда или кликните",
                                     ),
                                     color=TEXT_SECONDARY,
                                     font_size="13px",
@@ -1339,7 +1339,7 @@ def _avatar_upload_modal() -> rx.Component:
                                 rx.hstack(
                                     rx.box(
                                         rx.text(
-                                            "PNG",
+                                            "PNG / JPEG",
                                             color=ACCENT_BLUE,
                                             font_size="11px",
                                             font_weight="700",
@@ -1365,7 +1365,7 @@ def _avatar_upload_modal() -> rx.Component:
                             align="center",
                         ),
                         id="avatar-upload",
-                        accept={"image/png": [".png"]},
+                        accept={"image/png": [".png"], "image/jpeg": [".jpg", ".jpeg"]},
                         max_files=1,
                         on_drop=ProfileState.handle_avatar_select,
                         border=rx.cond(

@@ -5,6 +5,7 @@ import reflex as rx
 import httpx
 
 API_URL = os.getenv("FASTAPI_URL", "http://localhost:8001")
+FILES_URL = os.getenv("PUBLIC_FILES_URL", API_URL)
 
 
 class AuthState(rx.State):
@@ -147,10 +148,11 @@ class AuthState(rx.State):
                 data = resp.json()
             
             if "icon" in data:
-                self.user_icon = data["icon"]
+                import time as _time
+                self.user_icon = f"{FILES_URL}/{data['icon']}?t={int(_time.time())}"
                 # Обновляем avatar_url в ProfileState
                 profile_state = await self.get_state("koritsu.state.profile_state.ProfileState")
-                profile_state.avatar_url = f"{API_URL}/{data['icon']}"
+                profile_state.avatar_url = f"{FILES_URL}/{data['icon']}?t={int(_time.time())}"
             
             self.show_avatar_upload = False
         except Exception:
@@ -317,7 +319,7 @@ class AuthState(rx.State):
             # превращаем серверный путь в URL
             if icon:
                 import time as _time
-                self.user_icon = f"{API_URL}/{icon}?t={int(_time.time())}"
+                self.user_icon = f"{FILES_URL}/{icon}?t={int(_time.time())}"
             else:
                 self.user_icon = ""
             self.sub_level = ud.get("sub_level", "free")

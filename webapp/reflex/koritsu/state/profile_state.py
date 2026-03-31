@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from koritsu.state.auth_state import AuthState
 
 API_URL = os.getenv("FASTAPI_URL", "http://localhost:8001")
+FILES_URL = os.getenv("PUBLIC_FILES_URL", API_URL)
 
 
 class FileData(BaseModel):
@@ -300,8 +301,9 @@ class ProfileState(rx.State):
         if not files:
             return
         file = files[0]
-        if not file.filename.lower().endswith(".png"):
-            self.avatar_upload_error = "Разрешены только файлы формата PNG"
+        fname_lower = file.filename.lower()
+        if not any(fname_lower.endswith(e) for e in (".png", ".jpg", ".jpeg")):
+            self.avatar_upload_error = "Разрешены только файлы PNG и JPEG"
             self.avatar_preview_url = ""
             self.avatar_pending_b64 = ""
             return
@@ -309,7 +311,8 @@ class ProfileState(rx.State):
         import base64
         upload_data = await file.read()
         b64 = base64.b64encode(upload_data).decode("utf-8")
-        self.avatar_preview_url = f"data:image/png;base64,{b64}"
+        mime = "image/jpeg" if fname_lower.endswith((".jpg", ".jpeg")) else "image/png"
+        self.avatar_preview_url = f"data:{mime};base64,{b64}"
         self.avatar_pending_b64 = b64
         self.avatar_pending_filename = file.filename
 
@@ -326,12 +329,14 @@ class ProfileState(rx.State):
 
         import base64
         upload_data = base64.b64decode(self.avatar_pending_b64)
+        _fname = self.avatar_pending_filename.lower()
+        _mime = "image/jpeg" if _fname.endswith((".jpg", ".jpeg")) else "image/png"
 
         try:
             async with httpx.AsyncClient() as client:
                 resp = await client.post(
                     f"{API_URL}/user/{auth_state.user_uuid}/avatar",
-                    files={"file": (self.avatar_pending_filename, upload_data, "image/png")},
+                    files={"file": (self.avatar_pending_filename, upload_data, _mime)},
                     timeout=30,
                 )
                 data = resp.json()
@@ -342,9 +347,9 @@ class ProfileState(rx.State):
         if "icon" in data:
             import time
             ts = int(time.time())
-            self.avatar_url = f"{API_URL}/{data['icon']}?t={ts}"
+            self.avatar_url = f"{FILES_URL}/{data['icon']}?t={ts}"
             # Синхронизируем с AuthState для хедера и home
-            auth_state.user_icon = f"{API_URL}/{data['icon']}?t={ts}"
+            auth_state.user_icon = f"{FILES_URL}/{data['icon']}?t={ts}"
 
         self.show_avatar_upload = False
         self.avatar_preview_url = ""
@@ -404,7 +409,7 @@ class ProfileState(rx.State):
             self.display_name = ud.get("display_name") or ud.get("username", "")
             icon = ud.get("icon") or ""
             import time as _time
-            self.avatar_url = f"{API_URL}/{icon}?t={int(_time.time())}" if icon else ""
+            self.avatar_url = f"{FILES_URL}/{icon}?t={int(_time.time())}" if icon else ""
 
         # Загружаем реферальные данные
         try:

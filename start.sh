@@ -11,6 +11,11 @@
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Активируем виртуальный окружение
+if [[ -f "$ROOT/venv/bin/activate" ]]; then
+    source "$ROOT/venv/bin/activate"
+fi
+
 LOGS="$ROOT/log"
 PIDS="$LOGS/pids"
 
@@ -135,8 +140,8 @@ cmd_start() {
     echo -e "${CYN}[1/2]${RST} Запуск uvicorn (service_api:app) на порту ${BLD}$UVICORN_PORT${RST}"
 
     cd "$SERVER_DIR"
-    nohup uvicorn service_api:app \
-        --host 0.0.0.0 \
+    nohup "$ROOT/venv/bin/python" -m uvicorn service_api:app \
+        --host 127.0.0.1 \
         --port "$UVICORN_PORT" \
         --workers 1 \
         >> "$LOGS/uvicorn.log" 2>&1 &
@@ -156,11 +161,14 @@ cmd_start() {
 
     cd "$REFLEX_DIR"
     nohup reflex run \
+        --frontend-port 3000 \
+        --backend-port 8002 \
+        --backend-host 0.0.0.0 \
         >> "$LOGS/reflex.log" 2>&1 &
     save_pid "reflex" $!
     cd "$ROOT"
 
-    sleep 2
+    sleep 3
     local rpid2; rpid2=$(read_pid "reflex")
     if pid_alive "$rpid2"; then
         echo -e "   ${GRN}✓${RST} reflex запущен (PID $rpid2)"
