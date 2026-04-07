@@ -1,0 +1,69 @@
+# config.yaml — глобальные настройки contextualizer
+# Один файл на весь сервер.
+
+# Глобальные переменные, которые ищем в каждом загруженном документе.
+# Найденные значения попадают в ## Header раздел context.md.
+global_variables:
+  lab_number:
+    label: "Номер лабораторной работы"
+    patterns:
+      - "(?i)лаб(?:ораторная)?\\s*(?:работа)?\\s*[№#]?\\s*(\\d+)"
+      - "(?i)lab(?:\\s*work)?\\s*[#№]?\\s*(\\d+)"
+    extract: "first_group"   # 'first_group' | 'full_match'
+    multiline: false
+
+  lab_goal:
+    label: "Цель работы"
+    patterns:
+      - "(?i)цель\\s*(?:работы|лабораторной)?\\s*[:\\-]\\s*(.+)"
+      - "(?i)цель\\s*[:\\-]\\s*(.+)"
+    extract: "first_group"
+    multiline: true           # захватить до пустой строки
+
+  student_name:
+    label: "ФИО студента"
+    patterns:
+      - "(?i)(?:выполнил|студент|исполнитель)\\s*[:\\-]?\\s*([А-ЯЁ][а-яё]+(?:\\s+[А-ЯЁ][а-яё]+){1,2})"
+    extract: "first_group"
+    multiline: false
+
+  group_number:
+    label: "Номер группы"
+    patterns:
+      - "(?i)группа\\s*[:\\-]?\\s*([А-ЯЁA-Z0-9\\-\\/]+)"
+    extract: "first_group"
+    multiline: false
+
+  discipline:
+    label: "Дисциплина"
+    patterns:
+      - "(?i)дисциплина\\s*[:\\-]?\\s*(.+)"
+      - "(?i)предмет\\s*[:\\-]?\\s*(.+)"
+    extract: "first_group"
+    multiline: false
+
+# Поддерживаемые расширения файлов
+supported_extensions:
+  image:   [".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif"]
+  pdf:     [".pdf"]
+  word:    [".docx", ".doc"]
+  archive: [".tar", ".tar.gz", ".tar.bz2", ".tgz", ".7z"]
+
+# Настройки OCR (Tesseract)
+ocr:
+  language: "rus+eng"       # языки распознавания
+
+# Настройки извлечения контекста
+context:
+  max_text_chars: 50000     # обрезаем текст файла до этого числа символов
+  max_archive_depth: 3      # максимальная глубина вложенных архивов
+
+# Маппинг doc_-тегов шаблона на переменные из global_variables.
+# Ключ = точное имя тега (с префиксом doc_), значение = имя переменной из global_variables.
+# Дополняется администратором через admin panel.
+doc_tag_mapping:
+  doc_цель_работы: lab_goal
+  doc_номер_лабы: lab_number
+  doc_фио: student_name
+  doc_группа: group_number
+  doc_дисциплина: discipline

@@ -11,3 +11,11 @@ uvicorn
 python-dotenv
 httpx
 Pillow
+# contextualizer
+pdfplumber
+pytesseract
+py7zr
+pdf2image
+openai
+anthropic
+python-multipart

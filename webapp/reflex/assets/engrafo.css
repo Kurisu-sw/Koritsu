@@ -27,97 +27,114 @@
   box-shadow: 0 0 0 3px rgba(34,242,239,0.08), 0 2px 8px rgba(0,0,0,0.15);
 }
 
-/* Toolbar placeholder row */
-.tag-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 6px 12px;
-  border-bottom: 1px solid rgba(255,255,255,0.04);
-  min-height: 32px;
+/* ── Quill dark theme overrides ─────────────────────────────────── */
+/*
+ * Важно: Quill вставляет .ql-toolbar КАК СОСЕД (sibling) контейнера,
+ * а НЕ внутрь него. .tag-quill сам СТАНОВИТСЯ .ql-container после init.
+ * Поэтому:
+ *   .tag-field-apple .ql-toolbar  — тулбар (дочерний элемент tag-field-apple)
+ *   .tag-quill                    — сам контейнер (для border override)
+ *   .expand-quill-wrap .ql-toolbar — тулбар expand-редактора
+ */
+
+/* Toolbar — скрыт по умолчанию, появляется при фокусе на tag-field-apple */
+.tag-field-apple .ql-toolbar,
+.expand-quill-wrap .ql-toolbar {
+  background: rgba(255,255,255,0.03);
+  border: none !important;
+  border-bottom: 1px solid rgba(255,255,255,0.06) !important;
+  border-radius: 0;
+  padding: 5px 10px;
+  display: none;
   opacity: 0;
   transition: opacity 0.2s ease;
+  box-sizing: border-box;
 }
-.tag-field-apple:focus-within .tag-toolbar {
+.tag-field-apple:focus-within .ql-toolbar {
+  display: block;
   opacity: 1;
 }
-.tag-toolbar-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 7px;
-  border: none;
-  background: transparent;
-  color: rgba(232,234,240,0.35);
-  cursor: not-allowed;
-  transition: all 0.15s ease;
-  font-size: 13px;
-  font-weight: 600;
-}
-.tag-toolbar-btn:hover {
-  background: rgba(255,255,255,0.05);
-  color: rgba(232,234,240,0.50);
-}
-.tag-toolbar-sep {
-  width: 1px;
-  height: 16px;
-  background: rgba(255,255,255,0.06);
-  margin: 0 4px;
-  flex-shrink: 0;
+/* expand-quill toolbar — всегда видимый */
+.expand-quill-wrap .ql-toolbar {
+  display: block !important;
+  opacity: 1 !important;
 }
 
-/* ── Tag textarea (native rx.el.textarea) ───────────────────────── */
-.tag-textarea {
-  background: transparent !important;
+/* Иконки тулбара */
+.tag-field-apple .ql-toolbar .ql-stroke,
+.expand-quill-wrap .ql-toolbar .ql-stroke {
+  stroke: rgba(232,234,240,0.45);
+}
+.tag-field-apple .ql-toolbar .ql-fill,
+.expand-quill-wrap .ql-toolbar .ql-fill {
+  fill: rgba(232,234,240,0.45);
+}
+.tag-field-apple .ql-toolbar button:hover .ql-stroke,
+.expand-quill-wrap .ql-toolbar button:hover .ql-stroke {
+  stroke: #22F2EF;
+}
+.tag-field-apple .ql-toolbar button:hover .ql-fill,
+.expand-quill-wrap .ql-toolbar button:hover .ql-fill {
+  fill: #22F2EF;
+}
+.tag-field-apple .ql-toolbar button.ql-active .ql-stroke,
+.expand-quill-wrap .ql-toolbar button.ql-active .ql-stroke {
+  stroke: #22F2EF;
+}
+.tag-field-apple .ql-toolbar button.ql-active .ql-fill,
+.expand-quill-wrap .ql-toolbar button.ql-active .ql-fill {
+  fill: #22F2EF;
+}
+
+/* Контейнер редактора: .tag-quill и .expand-quill САМИ являются
+   .ql-container после инициализации — убираем дефолтную белую рамку Quill */
+.tag-quill,
+.expand-quill {
   border: none !important;
-  border-radius: 0 !important;
-  box-shadow: none !important;
-  color: #E8EAF0 !important;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
-  font-size: 14px !important;
-  line-height: 1.75 !important;
-  min-height: 90px !important;
-  padding: 8px 14px 14px !important;
-  width: 100% !important;
-  resize: vertical;
-  outline: none !important;
-  display: block;
-}
-.tag-textarea::placeholder {
-  color: rgba(255,255,255,0.10) !important;
-}
-.tag-textarea:focus {
-  outline: none !important;
-  box-shadow: none !important;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 14px;
 }
 
-/* ── Expand editor textarea ─────────────────────────────────────── */
-.expand-textarea {
-  background: rgba(255,255,255,0.04) !important;
-  border: 1px solid rgba(255,255,255,0.08) !important;
-  border-radius: 12px !important;
-  box-shadow: none !important;
-  color: #E8EAF0 !important;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
-  font-size: 14px !important;
-  line-height: 1.75 !important;
-  min-height: 220px !important;
-  padding: 12px 16px !important;
-  width: 100% !important;
-  resize: vertical;
-  outline: none !important;
-  display: block;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+/* Область ввода */
+.tag-quill .ql-editor,
+.expand-quill .ql-editor {
+  background: transparent;
+  color: #E8EAF0;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 14px;
+  line-height: 1.75;
+  min-height: 90px;
+  padding: 8px 14px 14px;
 }
-.expand-textarea::placeholder {
-  color: rgba(255,255,255,0.15) !important;
+.expand-quill .ql-editor {
+  min-height: 220px;
+  padding: 12px 16px;
 }
-.expand-textarea:focus {
-  outline: none !important;
-  border-color: rgba(34,242,239,0.40) !important;
-  box-shadow: 0 0 0 2px rgba(34,242,239,0.12) !important;
+.tag-quill .ql-editor:focus,
+.expand-quill .ql-editor:focus {
+  outline: none;
+}
+/* Placeholder */
+.tag-quill .ql-editor.ql-blank::before,
+.expand-quill .ql-editor.ql-blank::before {
+  color: rgba(255,255,255,0.15);
+  font-style: normal;
+  left: 14px;
+}
+/* Inline images */
+.tag-quill .ql-editor img,
+.expand-quill .ql-editor img {
+  max-height: 120px;
+  max-width: 100%;
+  border-radius: 6px;
+  vertical-align: middle;
+  margin: 2px 3px;
+  cursor: default;
+}
+
+/* ── Image insert button hover ──────────────────────────────────── */
+.tag-img-btn:hover {
+  background: rgba(201,35,248,0.10) !important;
 }
 
 /* ── Context upload button ──────────────────────────────────────── */

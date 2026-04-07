@@ -28,6 +28,12 @@ _ENGRAFO_MODULE = os.path.normpath(
 if _ENGRAFO_MODULE not in sys.path:
     sys.path.insert(0, _ENGRAFO_MODULE)
 
+_MODULES_DIR = os.path.normpath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../../modules")
+)
+if _MODULES_DIR not in sys.path:
+    sys.path.insert(0, _MODULES_DIR)
+
 import template_manager as _tm   # type: ignore
 import docx_processor  as _dp   # type: ignore
 import pdf_converter   as _pc   # type: ignore
@@ -152,8 +158,22 @@ def _build_tag_value(text: str, image_src: str) -> str:
 def _make_tag_entry(key: str, label: str, value: str) -> dict[str, str]:
     """Create a full tag entry dict with text/image_src split from value."""
     text, image_src = _parse_tag_value(value)
-    return {"key": key, "label": label, "value": value,
-            "text": text, "image_src": image_src}
+    # Normalize value to valid HTML for contenteditable (data-init-html).
+    # __ctx__: values are JSON payloads for docx_processor — leave unchanged.
+    if value and not value.startswith("__ctx__:"):
+        if value.startswith("data:image/"):
+            # Raw data URL stored without wrapper — reconstruct <img>
+            html_value = '<img src="' + value + '" class="tag-inline-img">'
+        elif "<" not in value:
+            # Plain text (e.g. from AI generation) — convert \n to <br>
+            html_value = value.replace("\n", "<br>")
+        else:
+            html_value = value
+    else:
+        html_value = value
+    return {"key": key, "label": label, "value": html_value,
+            "text": text, "image_src": image_src,
+            "type": _tm._detect_tag_type(key)}
 
 
 # ── State ──────────────────────────────────────────────────────────────────────
@@ -217,6 +237,7 @@ class EngrafoState(rx.State):
     expand_value: str = ""    # текущее значение в expand (комбинированное)
     expand_text: str = ""     # текстовая часть в expand
     expand_image_src: str = ""  # картинка в expand (data URL)
+    expand_html: str = ""     # raw HTML из contenteditable expand-редактора
 
     # ── Image picker ──────────────────────────────────────────────────────────
     image_picker_key: str = ""   # ключ тега, в который вставляем картинку
@@ -227,6 +248,24 @@ class EngrafoState(rx.State):
     # ── Context file upload ───────────────────────────────────────────────────
     show_context_upload: bool = False
     context_files: list[dict[str, str]] = []   # [{name, size, ext}]
+
+    # ── AI / Contextualizer ───────────────────────────────────────────────────
+    ai_loading: bool = False          # идёт ли AI-операция
+    ai_status_msg: str = ""           # последнее сообщение о статусе AI
+    needs_prompt_tags: list[str] = [] # теги без промпта — нужен ввод юзера
+    show_ai_prompt_dialog: bool = False
+    ai_prompt_tag_key: str = ""
+    ai_prompt_system: str = ""
+    ai_prompt_user_text: str = ""
+    ai_prompt_context_level: str = "full"
+    ai_prompt_include_ocr: bool = True
+
+    # ── Generate modal ────────────────────────────────────────────────────
+    show_generate_modal: bool = False
+    generate_mode: str = "ai"  # "ai" | "manual"
+    # [{key, label, has_prompt, selected, custom_prompt}]
+    generate_tag_rows: list[dict[str, str]] = []
+    manual_context_url: str = ""   # URL скачать ai_context.md
 
     # ── Tag history (последние 3 уникальных значения для chips) ────────────
     tag_history: dict[str, list[str]] = {}
@@ -253,6 +292,17 @@ class EngrafoState(rx.State):
     success_msg: str = ""
     loading:     bool = False
 
+    # ── Global tags (page /engrafo tabs) ──────────────────────────────────────
+    engrafo_tab: str = "reports"        # "reports" | "global_tags"
+    # [{key, value}] — user-level default tag values
+    global_tags: list[dict[str, str]] = []
+    global_tag_new_key: str = ""
+    global_tag_new_value: str = ""
+
+    # ── Global tags popup при создании отчёта ────────────────────────────────
+    show_global_popup: bool = False
+    global_popup_tags: list[str] = []   # ключи global_ тегов найденных в шаблоне
+
     # =========================================================================
     # Page on_load handlers
     # =========================================================================
@@ -264,6 +314,7 @@ class EngrafoState(rx.State):
             self.templates = _str_dicts(_tm.list_templates(self.user_uuid))
             self.reports   = _report_dicts(_rm.list_reports(self.user_uuid))
             self.profiles  = _profile_dicts(_pm.list_profiles(self.user_uuid))
+            self._load_global_tags()
 
     async def on_load_editor(self):
         """Вызывается при загрузке страницы /engrafo/editor."""
@@ -325,18 +376,44 @@ class EngrafoState(rx.State):
         self.current_report_title = meta["title"]
         self.show_new_report_dialog = False
 
-        # Загружаем теги шаблона
+        # Загружаем теги шаблона (без global_ значений — их применим через popup)
         tpl_path = _tm.get_template_path(self.user_uuid, self.selected_template_id)
         if tpl_path:
+            tags = _tm.extract_tags(tpl_path)
             self.tag_entries = [
                 _make_tag_entry(t["key"], t["label"], "")
-                for t in _tm.extract_tags(tpl_path)
+                for t in tags
             ]
+            # Проверяем есть ли global_ теги с заполненными значениями
+            global_vals = self._load_global_tags_dict()
+            global_keys_in_tpl = [t["key"] for t in tags if t["key"].startswith("global_")]
+            fillable = [k for k in global_keys_in_tpl if global_vals.get(k)]
+            if fillable:
+                self.global_popup_tags = fillable
+                self.show_global_popup = True
 
         self.versions    = []
         self.preview_url = ""
 
         yield rx.redirect("/engrafo/editor")
+
+    def apply_global_tags(self):
+        """Применить глобальные теги из профиля пользователя."""
+        global_vals = self._load_global_tags_dict()
+        self.tag_entries = [
+            _make_tag_entry(e["key"], e["label"], global_vals.get(e["key"], e["value"]))
+            if e["key"].startswith("global_") and global_vals.get(e["key"])
+            else e
+            for e in self.tag_entries
+        ]
+        self.show_global_popup = False
+        self.global_popup_tags = []
+        self.form_key += 1  # перемонтировать contenteditable с новыми значениями
+
+    def skip_global_tags(self):
+        """Закрыть popup без применения глобальных тегов."""
+        self.show_global_popup = False
+        self.global_popup_tags = []
 
     # =========================================================================
     # Template selection (in editor)
@@ -443,6 +520,36 @@ class EngrafoState(rx.State):
         else:
             self.set_tag_image(key, data_url)
 
+    def set_tag_html(self, key: str, html: str):
+        """Сохранить raw HTML из contenteditable для тега (поддерживает несколько картинок)."""
+        # Normalize empty contenteditable output
+        cleaned = html.strip()
+        if cleaned in ("<br>", "<div><br></div>", "<p><br></p>"):
+            cleaned = ""
+        self.tag_entries = [
+            _make_tag_entry(e["key"], e["label"], cleaned) if e["key"] == key else e
+            for e in self.tag_entries
+        ]
+        self._last_change_ts = time.time()
+        self._try_autosave()
+
+    def handle_html_update(self, data: str):
+        """Вызывается из JS при blur contenteditable.
+        Формат data: 'TAG_KEY|||html' или '__EXPAND__|||html'
+        """
+        if not data or "|||" not in data:
+            return
+        key, html = data.split("|||", 1)
+        if key == "__EXPAND__":
+            cleaned = html.strip()
+            if cleaned in ("<br>", "<div><br></div>", "<p><br></p>"):
+                cleaned = ""
+            self.expand_html = cleaned
+            self.expand_value = cleaned
+            self.expand_text, self.expand_image_src = _parse_tag_value(cleaned)
+        else:
+            self.set_tag_html(key, html)
+
     def clear_tag_value(self, key: str):
         """Полностью очистить значение тега (текст и картинку)."""
         self.tag_entries = [
@@ -465,6 +572,7 @@ class EngrafoState(rx.State):
                 self.expand_key = key
                 self.expand_label = e["label"]
                 self.expand_value = e["value"]
+                self.expand_html = e["value"]
                 self.expand_text = e.get("text", "")
                 self.expand_image_src = e.get("image_src", "")
                 break
@@ -490,9 +598,10 @@ class EngrafoState(rx.State):
         self.expand_value = _build_tag_value(self.expand_text, "")
 
     def save_expand_and_close(self):
-        """Сохранить текст+картинку из expand-редактора и закрыть."""
+        """Сохранить HTML из expand-редактора и закрыть."""
         if self.expand_key:
-            value = _build_tag_value(self.expand_text, self.expand_image_src)
+            # Use expand_html (from contenteditable) if available, else fall back
+            value = self.expand_html or _build_tag_value(self.expand_text, self.expand_image_src)
             self.tag_entries = [
                 _make_tag_entry(e["key"], e["label"], value)
                 if e["key"] == self.expand_key else e
@@ -504,6 +613,7 @@ class EngrafoState(rx.State):
         self.expand_key = ""
         self.expand_label = ""
         self.expand_value = ""
+        self.expand_html = ""
         self.expand_text = ""
         self.expand_image_src = ""
 
@@ -511,6 +621,7 @@ class EngrafoState(rx.State):
         self.expand_key = ""
         self.expand_label = ""
         self.expand_value = ""
+        self.expand_html = ""
         self.expand_text = ""
         self.expand_image_src = ""
 
@@ -785,6 +896,13 @@ class EngrafoState(rx.State):
         self.show_context_upload = False
 
     def _context_dir(self) -> str:
+        """Папка files конкретного отчёта — туда же куда и фото."""
+        if self.current_report_id:
+            return os.path.join(
+                self._FILES_BASE, "users", self.user_uuid,
+                "engrafo", "reports", self.current_report_id, "files",
+            )
+        # fallback — глобальная папка если отчёт ещё не создан
         return os.path.join(self._FILES_BASE, "users", self.user_uuid, "engrafo", "context")
 
     def _load_context_files(self):
@@ -814,9 +932,16 @@ class EngrafoState(rx.State):
         yield
 
         try:
+            from contextualizer.file_processor import process_upload  # type: ignore
+            from contextualizer.context_builder import build_context   # type: ignore
+
+            # Все файлы (включая изображения) сохраняем в папку files/ отчёта.
             ctx = self._context_dir()
             os.makedirs(ctx, exist_ok=True)
+
             saved = 0
+            all_warnings = []
+
             for file in files:
                 ext = os.path.splitext(file.filename or "")[1].lower()
                 if ext not in self._CONTEXT_ALLOWED_EXT:
@@ -825,14 +950,29 @@ class EngrafoState(rx.State):
                 if len(content) > self._CONTEXT_MAX_SIZE:
                     self.error_msg = f"{file.filename}: файл слишком большой (макс. 20MB)"
                     continue
-                # Sanitize filename
+
                 safe = "".join(c for c in (file.filename or "file") if c.isalnum() or c in ".-_ ")[:120]
                 with open(os.path.join(ctx, safe), "wb") as fh:
                     fh.write(content)
+
+                # Обрабатываем через contextualizer если есть активный отчёт
+                if self.current_report_id and self.user_uuid:
+                    try:
+                        processed, warns = process_upload(file.filename or safe, content)
+                        all_warnings.extend(warns)
+                        if processed:
+                            result = build_context(self.user_uuid, self.current_report_id, processed)
+                            all_warnings.extend(result.get("warnings", []))
+                    except Exception as ctx_exc:
+                        all_warnings.append(f"Contextualizer: {ctx_exc}")
+
                 saved += 1
+
             self._load_context_files()
             if saved:
                 self.success_msg = f"Загружено файлов: {saved}"
+                if all_warnings:
+                    self.ai_status_msg = "Предупреждения: " + "; ".join(all_warnings[:3])
         except Exception as exc:
             self.error_msg = f"Ошибка загрузки: {exc}"
         finally:
@@ -845,6 +985,464 @@ class EngrafoState(rx.State):
         if os.path.isfile(path):
             os.remove(path)
         self._load_context_files()
+
+    # =========================================================================
+    # AI / Contextualizer
+    # =========================================================================
+
+    async def run_ai_sequencer(self):
+        """Запустить LLM-агент для генерации контента тегов."""
+        if not self.current_report_id or not self.user_uuid:
+            self.error_msg = "Сначала создайте или откройте отчёт"
+            return
+        if self.ai_loading:
+            return
+
+        self.ai_loading = True
+        self.ai_status_msg = "Генерация контента..."
+        self.error_msg = ""
+        yield
+
+        try:
+            from contextualizer.sequencer import run_sequencer as _run_seq  # type: ignore
+
+            # Собираем список тегов из текущего отчёта
+            tags = [e["key"] for e in self.tag_entries] if self.tag_entries else None
+
+            result = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: _run_seq(
+                    self.user_uuid,
+                    self.current_report_id,
+                    tags=tags,
+                    custom_prompts={},
+                )
+            )
+
+            if "error" in result:
+                self.error_msg = result["error"]
+            else:
+                processed = result.get("processed", [])
+                self.needs_prompt_tags = result.get("needs_prompt", [])
+                self.ai_status_msg = f"Сгенерировано: {len(processed)} тег(ов)"
+                if self.needs_prompt_tags:
+                    self.ai_status_msg += f" | Нужен промпт: {len(self.needs_prompt_tags)}"
+                    # Открываем диалог для первого тега без промпта
+                    self.ai_prompt_tag_key = self.needs_prompt_tags[0]
+                    self.show_ai_prompt_dialog = True
+                if processed:
+                    self.success_msg = f"AI сгенерировал контент для: {', '.join(processed)}"
+        except Exception as exc:
+            self.error_msg = f"Ошибка AI: {exc}"
+            self.ai_status_msg = ""
+        finally:
+            self.ai_loading = False
+
+    async def apply_ai_steps(self):
+        """Применить steps.md → tag_values.json и обновить отображение тегов."""
+        if not self.current_report_id or not self.user_uuid:
+            self.error_msg = "Нет активного отчёта"
+            return
+
+        self.ai_loading = True
+        self.ai_status_msg = "Применение..."
+        yield
+
+        try:
+            from contextualizer.steps_applier import apply_steps as _apply  # type: ignore
+
+            tag_order = [e["key"] for e in self.tag_entries] if self.tag_entries else None
+            result = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: _apply(self.user_uuid, self.current_report_id, tag_order=tag_order),
+            )
+
+            if "error" in result:
+                self.error_msg = result["error"]
+            else:
+                applied = result.get("applied_tags", [])
+                # Перезагружаем tag_entries из обновлённого tag_values.json
+                await self._load_current_report()
+                self.form_key += 1
+                self.success_msg = f"Применено: {', '.join(applied)}" if applied else "Нечего применять"
+                self.ai_status_msg = ""
+        except Exception as exc:
+            self.error_msg = f"Ошибка применения: {exc}"
+        finally:
+            self.ai_loading = False
+
+    def open_ai_prompt_dialog(self, tag_key: str):
+        self.ai_prompt_tag_key = tag_key
+        self.ai_prompt_system = ""
+        self.ai_prompt_user_text = ""
+        self.ai_prompt_context_level = "full"
+        self.ai_prompt_include_ocr = True
+        self.show_ai_prompt_dialog = True
+
+    def close_ai_prompt_dialog(self):
+        self.show_ai_prompt_dialog = False
+
+    async def save_ai_prompt_and_run(self):
+        """Сохранить кастомный промпт и запустить sequencer для этого тега."""
+        if not self.ai_prompt_tag_key:
+            self.show_ai_prompt_dialog = False
+            return
+
+        self.show_ai_prompt_dialog = False
+        self.ai_loading = True
+        self.ai_status_msg = f"Генерация '{self.ai_prompt_tag_key}'..."
+        yield
+
+        try:
+            from contextualizer.sequencer import run_sequencer as _run_seq  # type: ignore
+
+            custom = {
+                self.ai_prompt_tag_key: {
+                    "system": self.ai_prompt_system or "Ты технический писатель.",
+                    "user": self.ai_prompt_user_text,
+                    "context_level": self.ai_prompt_context_level,
+                    "include_ocr": self.ai_prompt_include_ocr,
+                }
+            }
+
+            result = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: _run_seq(
+                    self.user_uuid,
+                    self.current_report_id,
+                    tags=[self.ai_prompt_tag_key],
+                    custom_prompts=custom,
+                )
+            )
+
+            if "error" in result:
+                self.error_msg = result["error"]
+            else:
+                # Убираем тег из списка needs_prompt
+                self.needs_prompt_tags = [
+                    t for t in self.needs_prompt_tags if t != self.ai_prompt_tag_key
+                ]
+                if result.get("processed"):
+                    self.success_msg = f"Тег '{self.ai_prompt_tag_key}' сгенерирован"
+                # Если ещё есть теги без промпта — открываем следующий
+                if self.needs_prompt_tags:
+                    self.ai_prompt_tag_key = self.needs_prompt_tags[0]
+                    self.ai_prompt_system = ""
+                    self.ai_prompt_user_text = ""
+                    self.show_ai_prompt_dialog = True
+        except Exception as exc:
+            self.error_msg = f"Ошибка AI: {exc}"
+        finally:
+            self.ai_loading = False
+
+    # =========================================================================
+    # Generate modal
+    # =========================================================================
+
+    def open_generate_modal(self):
+        """Открыть модальное окно выбора тегов для генерации."""
+        import yaml as _yaml
+
+        prompts_path = os.path.join(_MODULES_DIR, "contextualizer", "prompts.yaml")
+        try:
+            with open(prompts_path, encoding="utf-8") as _f:
+                _pcfg = _yaml.safe_load(_f)
+            system_tag_prompts = (_pcfg or {}).get("tag_prompts", {})
+            system_keys = set(system_tag_prompts.keys())
+            never_generate = set((_pcfg or {}).get("never_generate", []))
+        except Exception:
+            system_tag_prompts = {}
+            system_keys = set()
+            never_generate = set()
+
+        user_prompts = self._load_user_custom_prompts()
+
+        # Только теги, выбранные пользователем (visible в редакторе)
+        active_keys = set(self.selected_tags) if self.selected_tags else {e["key"] for e in self.tag_entries}
+        rows = []
+        for e in self.tag_entries:
+            key = e["key"]
+            # Пропускаем теги не выбранные пользователем
+            if key not in active_keys:
+                continue
+            # Пропускаем теги из never_generate
+            if key in never_generate:
+                continue
+            # Показываем только ai_ теги и теги без известного префикса.
+            # global_, doc_, raw_ — не для AI-генерации.
+            if any(key.startswith(p) for p in ("global_", "doc_", "raw_")):
+                continue
+            has_sys = key in system_keys
+            has_user = key in user_prompts
+            saved_prompt = ""
+            if not has_sys and has_user:
+                saved_prompt = user_prompts[key].get("user", "")
+            # Используем label из prompts.yaml если есть
+            label = (system_tag_prompts.get(key) or {}).get("label", "") or e["label"]
+            rows.append({
+                "key": key,
+                "label": label,
+                "has_prompt": "true" if (has_sys or has_user) else "false",
+                "selected": "true",   # все выбраны по умолчанию
+                "custom_prompt": saved_prompt,
+            })
+
+        self.generate_tag_rows = rows
+        self.generate_mode = "ai"
+        self.manual_context_url = ""
+        self.show_generate_modal = True
+
+    def close_generate_modal(self):
+        self.show_generate_modal = False
+        self.manual_context_url = ""
+
+    def set_generate_mode(self, mode: str):
+        self.generate_mode = mode
+        self.manual_context_url = ""
+
+    def toggle_generate_key(self, key: str):
+        self.generate_tag_rows = [
+            {**r, "selected": "false" if r["selected"] == "true" else "true"}
+            if r["key"] == key else r
+            for r in self.generate_tag_rows
+        ]
+
+    def set_generate_custom_prompt(self, key: str, value: str):
+        self.generate_tag_rows = [
+            {**r, "custom_prompt": value} if r["key"] == key else r
+            for r in self.generate_tag_rows
+        ]
+
+    def _load_user_custom_prompts(self) -> dict:
+        path = os.path.join(
+            self._FILES_BASE, "users", self.user_uuid, "engrafo", "prompts_custom.json"
+        )
+        if not os.path.isfile(path):
+            return {}
+        try:
+            import json as _json
+            with open(path, encoding="utf-8") as _f:
+                return _json.load(_f)
+        except Exception:
+            return {}
+
+    def _save_user_custom_prompts(self, new_prompts: dict):
+        import json as _json
+        path = os.path.join(
+            self._FILES_BASE, "users", self.user_uuid, "engrafo", "prompts_custom.json"
+        )
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        existing = self._load_user_custom_prompts()
+        existing.update(new_prompts)
+        with open(path, "w", encoding="utf-8") as _f:
+            _json.dump(existing, _f, ensure_ascii=False, indent=2)
+
+    async def run_generate(self):
+        """Запустить AI-генерацию для выбранных в модале тегов."""
+        selected = [r["key"] for r in self.generate_tag_rows if r["selected"] == "true"]
+        if not selected:
+            self.error_msg = "Выберите хотя бы один тег"
+            return
+        if not self.current_report_id or not self.user_uuid:
+            self.error_msg = "Сначала создайте или откройте отчёт"
+            return
+
+        # Собираем кастомные промпты для тегов без системного промпта
+        custom_to_save = {}
+        custom_for_run = {}
+        for r in self.generate_tag_rows:
+            if r["selected"] == "true" and r["has_prompt"] == "false" and r["custom_prompt"].strip():
+                entry = {
+                    "system": "Ты — технический писатель академических отчётов.",
+                    "user": r["custom_prompt"].strip(),
+                    "context_level": "full",
+                    "include_ocr": "false",
+                }
+                custom_to_save[r["key"]] = entry
+                custom_for_run[r["key"]] = entry
+
+        if custom_to_save:
+            self._save_user_custom_prompts(custom_to_save)
+
+        self.show_generate_modal = False
+        self.ai_loading = True
+        self.ai_status_msg = "Генерация контента..."
+        self.error_msg = ""
+        yield
+
+        try:
+            from contextualizer.sequencer import run_sequencer as _run_seq  # type: ignore
+
+            result = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: _run_seq(
+                    self.user_uuid,
+                    self.current_report_id,
+                    tags=selected,
+                    custom_prompts=custom_for_run,
+                ),
+            )
+            if "error" in result:
+                self.error_msg = result["error"]
+            else:
+                processed = result.get("processed", [])
+                self.needs_prompt_tags = result.get("needs_prompt", [])
+                self.ai_status_msg = f"Сгенерировано: {len(processed)} тег(ов)"
+                if self.needs_prompt_tags:
+                    self.ai_status_msg += f" | Нужен промпт: {len(self.needs_prompt_tags)}"
+                    self.ai_prompt_tag_key = self.needs_prompt_tags[0]
+                    self.show_ai_prompt_dialog = True
+                if processed:
+                    self.success_msg = f"AI сгенерировал контент для: {', '.join(processed)}"
+        except Exception as exc:
+            self.error_msg = f"Ошибка AI: {exc}"
+            self.ai_status_msg = ""
+        finally:
+            self.ai_loading = False
+
+    # =========================================================================
+    # Manual AI mode
+    # =========================================================================
+
+    async def build_ai_context_file(self):
+        """Создать ai_context.md для отправки в стороннюю нейросеть."""
+        if not self.current_report_id or not self.user_uuid:
+            self.error_msg = "Нет активного отчёта"
+            return
+
+        selected_keys = [r["key"] for r in self.generate_tag_rows if r["selected"] == "true"]
+        if not selected_keys:
+            self.error_msg = "Выберите хотя бы один тег"
+            return
+
+        import yaml as _yaml
+
+        prompts_path = os.path.join(_MODULES_DIR, "contextualizer", "prompts.yaml")
+        try:
+            with open(prompts_path, encoding="utf-8") as _f:
+                _pcfg = _yaml.safe_load(_f)
+            system_prompts = (_pcfg or {}).get("tag_prompts", {})
+        except Exception:
+            system_prompts = {}
+
+        user_prompts = self._load_user_custom_prompts()
+
+        rdir = os.path.join(
+            self._FILES_BASE, "users", self.user_uuid,
+            "engrafo", "reports", self.current_report_id,
+        )
+        ctx_path = os.path.join(rdir, "context.md")
+        context_text = ""
+        if os.path.isfile(ctx_path):
+            with open(ctx_path, encoding="utf-8") as _f:
+                context_text = _f.read()
+
+        ocr_path = os.path.join(rdir, "OCR.md")
+        ocr_text = ""
+        if os.path.isfile(ocr_path):
+            with open(ocr_path, encoding="utf-8") as _f:
+                ocr_text = _f.read()
+
+        lines = [
+            "# AI Context",
+            "",
+            "Заполни каждую секцию. **Строго соблюдай формат** — каждый ответ должен начинаться с:",
+            "",
+            "```",
+            "## Tag: ключ_тега",
+            "Текст ответа",
+            "```",
+            "",
+        ]
+
+        if context_text:
+            lines += [
+                "---",
+                "",
+                "## Контекст документа",
+                "",
+                context_text.strip(),
+                "",
+            ]
+
+        if ocr_text:
+            lines += [
+                "---",
+                "",
+                "## OCR изображений",
+                "",
+                ocr_text.strip(),
+                "",
+            ]
+
+        lines += ["---", "", "## Секции для заполнения", ""]
+
+        row_map = {r["key"]: r for r in self.generate_tag_rows}
+        for key in selected_keys:
+            row = row_map.get(key, {})
+            label = row.get("label", key)
+            custom_prompt = row.get("custom_prompt", "").strip()
+
+            if key in system_prompts:
+                prompt_text = system_prompts[key].get("user", "").strip()
+            elif key in user_prompts:
+                prompt_text = user_prompts[key].get("user", custom_prompt).strip()
+            else:
+                prompt_text = custom_prompt or f"Напиши раздел «{label}»."
+
+            lines += [
+                f"## Tag: {key}",
+                f"Метка: {label}",
+                f"Задание: {prompt_text}",
+                "",
+            ]
+
+        content = "\n".join(lines)
+        os.makedirs(rdir, exist_ok=True)
+        with open(os.path.join(rdir, "ai_context.md"), "w", encoding="utf-8") as _f:
+            _f.write(content)
+
+        api_url = os.getenv("FASTAPI_URL", "http://localhost:8001")
+        self.manual_context_url = (
+            f"{api_url}/files/users/{self.user_uuid}"
+            f"/engrafo/reports/{self.current_report_id}/ai_context.md"
+        )
+
+    async def upload_ans_md(self, files: list[rx.UploadFile]):
+        """Загрузить ans.md с ответами нейросети и применить к тегам."""
+        if not files:
+            return
+        try:
+            raw = await files[0].read()
+            text = raw.decode("utf-8", errors="replace")
+        except Exception as exc:
+            self.error_msg = f"Ошибка чтения файла: {exc}"
+            return
+
+        sections = _re.split(r'\n(?=## Tag: )', text)
+        parsed: dict[str, str] = {}
+        for section in sections:
+            m = _re.match(r'^## Tag: ([^\n]+)\n(.*)', section, _re.DOTALL)
+            if m:
+                parsed[m.group(1).strip()] = m.group(2).strip()
+
+        if not parsed:
+            self.error_msg = "В файле не найдено разделов «## Tag: ...»"
+            return
+
+        applied = []
+        self.tag_entries = [
+            (_make_tag_entry(e["key"], e["label"], parsed[e["key"]])
+             if e["key"] in parsed else e)
+            for e in self.tag_entries
+        ]
+        applied = [k for k in parsed if any(e["key"] == k for e in self.tag_entries)]
+
+        self.form_key += 1
+        self.show_generate_modal = False
+        self.success_msg = f"Применено из ans.md: {', '.join(applied)}" if applied else "Ничего не применено"
+        self._last_change_ts = time.time()
+        self._try_autosave()
 
     def open_tags_modal(self):
         self.show_tags_modal = True
@@ -875,6 +1473,9 @@ class EngrafoState(rx.State):
     # Feedback helpers
     # =========================================================================
 
+    def noop(self):
+        """Пустой обработчик для условных on_click."""
+
     def clear_messages(self):
         self.error_msg   = ""
         self.success_msg = ""
@@ -891,7 +1492,7 @@ class EngrafoState(rx.State):
     def visible_tag_entries(self) -> list[dict[str, str]]:
         """Только выбранные теги для отображения в редакторе."""
         if not self.selected_tags:
-            return self.tag_entries
+            return []
         return [e for e in self.tag_entries if e["key"] in self.selected_tags]
 
     @rx.var
@@ -919,6 +1520,101 @@ class EngrafoState(rx.State):
         return len(self.versions) > 0
 
     # =========================================================================
+    # Global tags (user-level defaults)
+    # =========================================================================
+
+    def set_engrafo_tab(self, tab: str):
+        self.engrafo_tab = tab
+
+    def set_global_tag_new_key(self, v: str):
+        self.global_tag_new_key = v
+
+    def set_global_tag_new_value(self, v: str):
+        self.global_tag_new_value = v
+
+    def _global_tags_path(self) -> str:
+        return os.path.join(
+            self._FILES_BASE, "users", self.user_uuid, "engrafo", "global_tags.json"
+        )
+
+    def _load_global_tags_dict(self) -> dict:
+        import json as _json
+        path = self._global_tags_path()
+        if not os.path.isfile(path):
+            return {}
+        try:
+            with open(path, encoding="utf-8") as f:
+                return _json.load(f)
+        except Exception:
+            return {}
+
+    @staticmethod
+    def _get_admin_global_tag_keys() -> list[dict]:
+        """Читает global_tag_keys из prompts.yaml (определяются администратором)."""
+        import yaml as _yaml
+        prompts_path = os.path.normpath(os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "../../../../modules/contextualizer/prompts.yaml"
+        ))
+        try:
+            with open(prompts_path, encoding="utf-8") as f:
+                pcfg = _yaml.safe_load(f) or {}
+            return pcfg.get("global_tag_keys", [])
+        except Exception:
+            return []
+
+    def _load_global_tags(self):
+        d = self._load_global_tags_dict()
+        # Добавляем admin-defined ключи если их нет у пользователя
+        for entry in self._get_admin_global_tag_keys():
+            key = str(entry.get("key", ""))
+            if key and key not in d:
+                d[key] = ""
+        self.global_tags = [{"key": k, "value": v} for k, v in d.items()]
+
+    def _save_global_tags_from_list(self):
+        import json as _json
+        path = self._global_tags_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        d = {e["key"]: e["value"] for e in self.global_tags}
+        with open(path, "w", encoding="utf-8") as f:
+            _json.dump(d, f, ensure_ascii=False, indent=2)
+
+    def set_global_tag_value(self, key: str, value: str):
+        self.global_tags = [
+            {"key": e["key"], "value": value} if e["key"] == key else e
+            for e in self.global_tags
+        ]
+        self._save_global_tags_from_list()
+
+    def add_global_tag(self):
+        key = self.global_tag_new_key.strip()
+        if not key:
+            return
+        # Update existing or add new
+        for e in self.global_tags:
+            if e["key"] == key:
+                self.global_tags = [
+                    {"key": e2["key"], "value": self.global_tag_new_value}
+                    if e2["key"] == key else e2
+                    for e2 in self.global_tags
+                ]
+                self._save_global_tags_from_list()
+                self.global_tag_new_key = ""
+                self.global_tag_new_value = ""
+                return
+        self.global_tags = self.global_tags + [
+            {"key": key, "value": self.global_tag_new_value}
+        ]
+        self._save_global_tags_from_list()
+        self.global_tag_new_key = ""
+        self.global_tag_new_value = ""
+
+    def delete_global_tag(self, key: str):
+        self.global_tags = [e for e in self.global_tags if e["key"] != key]
+        self._save_global_tags_from_list()
+
+    # =========================================================================
     # Internal helpers
     # =========================================================================
 
@@ -936,12 +1632,12 @@ class EngrafoState(rx.State):
         if tpl_path:
             self.tag_entries = [
                 _make_tag_entry(t["key"], t["label"],
-                                _clean_value(str(stored.get(t["key"], ""))))
+                                str(stored.get(t["key"], "")))
                 for t in _tm.extract_tags(tpl_path)
             ]
         else:
             self.tag_entries = [
-                _make_tag_entry(k, k, _clean_value(str(v)))
+                _make_tag_entry(k, k, str(v))
                 for k, v in stored.items()
             ]
 

@@ -1,0 +1,9 @@
+llm:
+  model: gpt-4o
+  temperature: 0.3
+  max_tokens: 2000
+never_generate: []
+tag_prompts: {}
+global_tag_keys:
+- key: global_fio
+  label: Фио

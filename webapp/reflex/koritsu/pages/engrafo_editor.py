@@ -62,6 +62,47 @@ def _badge(icon_name: str, color: str, bg: str) -> rx.Component:
     )
 
 
+# ── Tag type badge ────────────────────────────────────────────────────────
+
+_TYPE_COLORS = {
+    "global": ("#3b82f6", "rgba(59,130,246,0.12)", "Профиль"),
+    "doc":    ("#22c55e", "rgba(34,197,94,0.12)",  "Документ"),
+    "ai":     ("#a855f7", "rgba(168,85,247,0.12)", "AI"),
+    "raw":    ("#94a3b8", "rgba(148,163,184,0.10)", "Вручную"),
+}
+
+
+def _tag_type_badge(tag_type: str) -> rx.Component:
+    """Маленький бейдж типа тега."""
+    # Используем rx.cond цепочкой для динамического определения цвета
+    color = rx.cond(
+        tag_type == "global", _TYPE_COLORS["global"][0],
+        rx.cond(tag_type == "doc", _TYPE_COLORS["doc"][0],
+        rx.cond(tag_type == "ai", _TYPE_COLORS["ai"][0],
+        _TYPE_COLORS["raw"][0]))
+    )
+    bg = rx.cond(
+        tag_type == "global", _TYPE_COLORS["global"][1],
+        rx.cond(tag_type == "doc", _TYPE_COLORS["doc"][1],
+        rx.cond(tag_type == "ai", _TYPE_COLORS["ai"][1],
+        _TYPE_COLORS["raw"][1]))
+    )
+    label = rx.cond(
+        tag_type == "global", _TYPE_COLORS["global"][2],
+        rx.cond(tag_type == "doc", _TYPE_COLORS["doc"][2],
+        rx.cond(tag_type == "ai", _TYPE_COLORS["ai"][2],
+        _TYPE_COLORS["raw"][2]))
+    )
+    return rx.box(
+        rx.text(label, font_size="9px", font_weight="700",
+                color=color, font_family=SANS, letter_spacing="0.5px"),
+        background=bg,
+        border_radius="4px",
+        padding="1px 6px",
+        flex_shrink="0",
+    )
+
+
 # ── Tag field ──────────────────────────────────────────────────────────────
 
 def _tag_chip(entry: dict) -> rx.Component:
@@ -84,7 +125,9 @@ def _tag_chip(entry: dict) -> rx.Component:
                 color=rx.cond(is_selected, C_TEXT, C_MUTED),
                 font_family=SANS,
                 white_space="nowrap",
+                flex="1",
             ),
+            _tag_type_badge(entry["type"]),
             spacing="1", align="center",
         ),
         on_click=EngrafoState.toggle_tag_selection(entry["key"]),
@@ -359,12 +402,11 @@ def _context_upload_dialog() -> rx.Component:
 
 def _tag_field(entry: dict) -> rx.Component:
     """
-    Tag editor — native textarea для текста + миниатюра картинки.
-    Textarea нативная (rx.el.textarea) — on_blur для сохранения.
-    Ctrl+V картинка через JS proxy.
+    Tag editor — contenteditable div с inline-картинками.
+    Изображения вставляются в позицию курсора через JS.
+    Sync через engrafo-html-proxy при blur.
     """
     has_value = entry["value"] != ""
-    has_image = entry["image_src"] != ""
 
     return rx.el.div(
         # ── Label row ─────────────────────────────────────────
@@ -385,16 +427,39 @@ def _tag_field(entry: dict) -> rx.Component:
                 flex="1",
                 transition="color 0.25s ease",
             ),
-            rx.box(
+            _tag_type_badge(entry["type"]),
+            # Кнопка "Сгенерировать" только для raw_ тегов
+            rx.cond(
+                entry["type"] == "raw",
+                rx.box(
+                    rx.icon("wand-sparkles", size=13, color="rgba(148,163,184,0.60)"),
+                    on_click=EngrafoState.open_ai_prompt_dialog(entry["key"]),
+                    border_radius="8px", padding="5px",
+                    cursor="pointer",
+                    title="Сгенерировать с помощью AI",
+                    _hover={"background": "rgba(148,163,184,0.12)"},
+                    transition="all 0.2s ease",
+                    display="flex", align_items="center",
+                    flex_shrink="0",
+                ),
+            ),
+            # Image insert button — JS handles cursor insertion
+            rx.el.button(
                 rx.icon("image-plus", size=14, color="rgba(201,35,248,0.55)"),
-                on_click=EngrafoState.open_image_picker(entry["key"]),
-                border_radius="8px", padding="5px",
-                cursor="pointer",
-                _hover={"background": "rgba(201,35,248,0.10)"},
-                transition="all 0.2s ease",
-                display="flex", align_items="center",
-                flex_shrink="0",
-                title="Вставить изображение (или Ctrl+V)",
+                class_name="tag-img-btn",
+                data_img_key=entry["key"],
+                title="Вставить изображение в позицию курсора (или Ctrl+V)",
+                style={
+                    "background": "transparent",
+                    "border": "none",
+                    "border_radius": "8px",
+                    "padding": "5px",
+                    "cursor": "pointer",
+                    "display": "flex",
+                    "align_items": "center",
+                    "flex_shrink": "0",
+                    "transition": "all 0.2s ease",
+                },
             ),
             rx.box(
                 rx.icon("maximize-2", size=13, color="rgba(232,234,240,0.30)"),
@@ -409,60 +474,12 @@ def _tag_field(entry: dict) -> rx.Component:
             spacing="2", align="center", width="100%",
             padding="12px 14px 0",
         ),
-        _tag_toolbar(),
-        # ── Textarea (нативная, uncontrolled, on_blur сохраняет) ──
-        rx.el.textarea(
-            default_value=entry["text"],
-            placeholder=entry["label"],
-            class_name="tag-textarea",
-            on_blur=EngrafoState.set_tag_text(entry["key"]),
+        # ── Quill rich-text editor ──────────────────────────────
+        rx.el.div(
+            class_name="tag-quill",
             data_tag_key=entry["key"],
-        ),
-        # ── Миниатюра картинки (если есть) ──────────────────────
-        rx.cond(
-            has_image,
-            rx.box(
-                rx.el.img(
-                    src=entry["image_src"],
-                    style={"max_width": "100%", "max_height": "120px",
-                           "border_radius": "8px", "display": "block", "margin": "0 auto"},
-                ),
-                rx.hstack(
-                    rx.spacer(),
-                    rx.box(
-                        rx.icon("x", size=11, color=C_ERROR),
-                        rx.text("Удалить фото", font_size="10px",
-                                color=C_ERROR, font_family=SANS),
-                        on_click=EngrafoState.clear_tag_image(entry["key"]),
-                        display="flex", align_items="center", gap="4px",
-                        cursor="pointer", padding="4px 8px", border_radius="6px",
-                        _hover={"background": "rgba(255,77,106,0.10)"},
-                    ),
-                    padding="4px 10px", width="100%",
-                ),
-                padding="4px 14px 8px",
-                border_top="1px solid rgba(255,255,255,0.05)",
-            ),
-        ),
-        # ── Counter row ──────────────────────────────────────────
-        rx.hstack(
-            rx.spacer(),
-            rx.cond(
-                has_image,
-                rx.text(
-                    "+ фото",
-                    font_size="10px",
-                    color="rgba(201,35,248,0.65)",
-                    font_family=SANS,
-                    margin_right="6px",
-                ),
-            ),
-            rx.text(
-                entry["text"].length(),
-                font_size="10px", font_family=SANS,
-                color=rx.cond(entry["text"].length() > 480, C_ERROR, C_MUTED2),
-            ),
-            padding="0 14px 6px", width="100%",
+            data_init_html=entry["value"],
+            data_form_key=EngrafoState.form_key.to_string(),
         ),
         class_name="tag-field-apple",
         style={"width": "100%"},
@@ -746,64 +763,19 @@ def _expand_editor_dialog() -> rx.Component:
                     ),
                     spacing="2", align="center", width="100%",
                 ),
-                # ── Textarea для текста (нативная) ──────────────────
-                rx.el.textarea(
-                    value=EngrafoState.expand_text,
-                    on_change=EngrafoState.set_expand_text,
-                    placeholder="Введите текст...",
-                    class_name="expand-textarea",
-                    data_tag_key="__EXPAND__",
-                ),
-                # ── Миниатюра картинки ──────────────────────────────
-                rx.cond(
-                    EngrafoState.expand_image_src != "",
-                    rx.box(
-                        rx.el.img(
-                            src=EngrafoState.expand_image_src,
-                            style={"max_width": "100%", "max_height": "220px",
-                                   "border_radius": "8px", "display": "block",
-                                   "margin": "0 auto"},
-                        ),
-                        rx.hstack(
-                            rx.spacer(),
-                            rx.box(
-                                rx.icon("x", size=11, color=C_ERROR),
-                                rx.text("Удалить фото", font_size="10px",
-                                        color=C_ERROR, font_family=SANS),
-                                on_click=EngrafoState.clear_expand_image,
-                                display="flex", align_items="center", gap="4px",
-                                cursor="pointer", padding="4px 8px",
-                                border_radius="6px",
-                                _hover={"background": "rgba(255,77,106,0.10)"},
-                            ),
-                            padding="4px 0", width="100%",
-                        ),
-                        padding="10px",
-                        background="rgba(255,255,255,0.02)",
-                        border=f"1px solid {C_BORDER}",
-                        border_radius="10px",
-                        width="100%",
+                # ── Quill expand editor ──────────────────────────────
+                # Обёртка нужна: Quill вставляет toolbar как sibling перед
+                # .expand-quill, поэтому нужен общий родитель для CSS-правила
+                # .expand-quill-wrap .ql-toolbar { display: block }
+                rx.el.div(
+                    rx.el.div(
+                        class_name="expand-quill",
+                        data_tag_key="__EXPAND__",
+                        data_init_html=EngrafoState.expand_html,
+                        data_form_key=EngrafoState.form_key.to_string(),
                     ),
-                ),
-                # ── Кнопка добавить картинку ─────────────────────────
-                rx.cond(
-                    EngrafoState.expand_image_src == "",
-                    rx.button(
-                        rx.hstack(
-                            rx.icon("image-plus", size=13),
-                            rx.text("Добавить изображение",
-                                    font_size="12px", font_family=SANS),
-                            spacing="1", align="center",
-                        ),
-                        on_click=EngrafoState.open_image_picker("__EXPAND__"),
-                        background="rgba(201,35,248,0.08)",
-                        border="1px solid rgba(201,35,248,0.20)",
-                        border_radius="8px", color=C_PURPLE,
-                        padding="5px 12px", cursor="pointer",
-                        font_family=SANS,
-                        _hover={"background": "rgba(201,35,248,0.16)"},
-                        width="fit-content",
-                    ),
+                    class_name="expand-quill-wrap",
+                    style={"width": "100%"},
                 ),
                 # ── Кнопки ──────────────────────────────────────────
                 rx.hstack(
@@ -941,6 +913,352 @@ def _sidebar_versions() -> rx.Component:
     )
 
 
+def _global_popup_dialog() -> rx.Component:
+    """Popup предлагающий применить глобальные теги из профиля пользователя."""
+    tag_list = rx.vstack(
+        rx.foreach(
+            EngrafoState.global_popup_tags,
+            lambda k: rx.hstack(
+                rx.icon("user", size=12, color="#3b82f6"),
+                rx.text(k, font_size="12px", font_family=MONO, color=C_TEXT),
+                spacing="2", align="center",
+            ),
+        ),
+        gap="4px", align_items="flex_start",
+    )
+    return rx.dialog.root(
+        rx.dialog.content(
+            rx.vstack(
+                rx.hstack(
+                    rx.icon("user-check", size=18, color="#3b82f6"),
+                    rx.text(
+                        "Найдены глобальные теги",
+                        font_size="15px", font_weight="700",
+                        color=C_TEXT, font_family=SANS,
+                    ),
+                    spacing="2", align="center",
+                ),
+                rx.text(
+                    "В шаблоне найдены теги из вашего профиля. Хотите применить сохранённые значения?",
+                    font_size="13px", color=C_MUTED, font_family=SANS, line_height="1.5",
+                ),
+                tag_list,
+                rx.hstack(
+                    rx.button(
+                        "Применить",
+                        on_click=EngrafoState.apply_global_tags,
+                        background="#3b82f6",
+                        color="white",
+                        border_radius="8px",
+                        padding="8px 20px",
+                        font_size="13px",
+                        font_family=SANS,
+                        font_weight="600",
+                        cursor="pointer",
+                        _hover={"background": "#2563eb"},
+                    ),
+                    rx.button(
+                        "Пропустить",
+                        on_click=EngrafoState.skip_global_tags,
+                        background="transparent",
+                        color=C_MUTED,
+                        border=f"1px solid {C_BORDER}",
+                        border_radius="8px",
+                        padding="8px 20px",
+                        font_size="13px",
+                        font_family=SANS,
+                        cursor="pointer",
+                        _hover={"background": "rgba(255,255,255,0.04)"},
+                    ),
+                    spacing="3",
+                ),
+                gap="16px", padding="24px",
+                background=C_DIALOG,
+                border_radius="16px",
+                border=f"1px solid {C_BORDER}",
+                min_width="360px",
+                max_width="480px",
+            ),
+            background="transparent",
+            padding="0",
+        ),
+        open=EngrafoState.show_global_popup,
+    )
+
+
+def _ai_prompt_dialog() -> rx.Component:
+    """Диалог для ввода кастомного промпта для неизвестного тега."""
+    return rx.dialog.root(
+        rx.dialog.content(
+            rx.vstack(
+                rx.hstack(
+                    rx.icon("bot", size=16, color=C_PURPLE),
+                    rx.text("Промпт для тега", font_size="14px",
+                            font_weight="700", color=C_TEXT, font_family=SANS),
+                    rx.spacer(),
+                    rx.dialog.close(
+                        rx.icon("x", size=16, color=C_MUTED, cursor="pointer"),
+                        on_click=EngrafoState.close_ai_prompt_dialog,
+                    ),
+                    spacing="3", align="center", width="100%",
+                ),
+                rx.text(
+                    "Тег «",
+                    rx.text.span(EngrafoState.ai_prompt_tag_key,
+                                 color=C_CYAN, font_weight="700"),
+                    "» не найден в prompts.yaml. Опишите что нужно сгенерировать.",
+                    font_size="12px", color=C_MUTED, font_family=SANS,
+                ),
+                rx.text("Системный промпт", font_size="11px", color=C_MUTED,
+                        font_weight="600", font_family=SANS, text_transform="uppercase",
+                        letter_spacing="0.6px"),
+                rx.el.textarea(
+                    placeholder="Ты — технический писатель академических отчётов.",
+                    value=EngrafoState.ai_prompt_system,
+                    on_change=EngrafoState.set_ai_prompt_system,
+                    rows="3",
+                    style={
+                        "width": "100%", "background": C_CARD,
+                        "border": f"1px solid {C_BORDER}", "border_radius": "10px",
+                        "color": C_TEXT, "font_family": SANS, "font_size": "13px",
+                        "padding": "10px", "resize": "vertical", "outline": "none",
+                    },
+                ),
+                rx.text("Задание", font_size="11px", color=C_MUTED,
+                        font_weight="600", font_family=SANS, text_transform="uppercase",
+                        letter_spacing="0.6px"),
+                rx.el.textarea(
+                    placeholder="Напиши раздел «...» объёмом 100-200 слов на основе предоставленного контекста.",
+                    value=EngrafoState.ai_prompt_user_text,
+                    on_change=EngrafoState.set_ai_prompt_user_text,
+                    rows="4",
+                    style={
+                        "width": "100%", "background": C_CARD,
+                        "border": f"1px solid {C_BORDER}", "border_radius": "10px",
+                        "color": C_TEXT, "font_family": SANS, "font_size": "13px",
+                        "padding": "10px", "resize": "vertical", "outline": "none",
+                    },
+                ),
+                rx.hstack(
+                    rx.text("Уровень контекста:", font_size="12px", color=C_MUTED, font_family=SANS),
+                    rx.select(
+                        ["full", "global"],
+                        value=EngrafoState.ai_prompt_context_level,
+                        on_change=EngrafoState.set_ai_prompt_context_level,
+                        size="1",
+                    ),
+                    rx.text("OCR:", font_size="12px", color=C_MUTED, font_family=SANS),
+                    rx.switch(
+                        checked=EngrafoState.ai_prompt_include_ocr,
+                        on_change=EngrafoState.set_ai_prompt_include_ocr,
+                        size="1",
+                    ),
+                    spacing="2", align="center",
+                ),
+                rx.hstack(
+                    rx.dialog.close(
+                        rx.button(
+                            "Отмена",
+                            on_click=EngrafoState.close_ai_prompt_dialog,
+                            background="transparent",
+                            border=f"1px solid {C_BORDER}",
+                            border_radius="10px", color=C_MUTED,
+                            font_family=SANS, font_size="13px", cursor="pointer",
+                        ),
+                    ),
+                    rx.dialog.close(
+                        rx.button(
+                            rx.icon("sparkles", size=13),
+                            rx.text("Генерировать", font_family=SANS),
+                            spacing="2", align="center",
+                            on_click=EngrafoState.save_ai_prompt_and_run,
+                            background=f"linear-gradient(135deg, {C_PURPLE} 0%, #7c3aed 100%)",
+                            border_radius="10px", color="white",
+                            font_size="13px", cursor="pointer",
+                            padding_x="16px", padding_y="8px",
+                            _hover={"opacity": "0.85"},
+                        ),
+                    ),
+                    spacing="2", justify="end", width="100%",
+                ),
+                spacing="3", width="100%",
+            ),
+            background=C_DIALOG,
+            border=f"1px solid {C_BORDER}",
+            border_radius="16px",
+            padding="24px",
+            max_width="520px",
+            width="90vw",
+            backdrop_filter="blur(20px)",
+        ),
+        open=EngrafoState.show_ai_prompt_dialog,
+    )
+
+
+def _sidebar_context() -> rx.Component:
+    """Секция контекстных файлов и AI-генерации в сайдбаре."""
+    return rx.vstack(
+        rx.hstack(
+            _label("Контекст & AI", "bot", C_PURPLE),
+            rx.spacer(),
+            rx.cond(
+                EngrafoState.context_files.length() > 0,
+                rx.text(
+                    EngrafoState.context_files.length().to_string(),
+                    font_size="11px", font_weight="700",
+                    color=C_CYAN, font_family=SANS,
+                ),
+            ),
+            align="center", width="100%",
+        ),
+        # Статус AI
+        rx.cond(
+            EngrafoState.ai_status_msg != "",
+            rx.hstack(
+                rx.icon("info", size=12, color=C_PURPLE),
+                rx.text(EngrafoState.ai_status_msg,
+                        font_size="11px", color=C_PURPLE, font_family=SANS,
+                        flex="1", no_of_lines=2),
+                spacing="1", align="start", width="100%",
+                padding="8px", border_radius="8px",
+                background="rgba(139,92,246,0.08)",
+            ),
+        ),
+        # Кнопки AI
+        rx.vstack(
+            rx.button(
+                rx.cond(
+                    EngrafoState.ai_loading,
+                    rx.hstack(
+                        rx.spinner(size="2"),
+                        rx.text("Генерация...", font_family=SANS, font_size="14px",
+                                font_weight="700"),
+                        spacing="2", align="center",
+                    ),
+                    rx.hstack(
+                        rx.icon("sparkles", size=16),
+                        rx.text("Сгенерировать", font_family=SANS, font_size="14px",
+                                font_weight="700"),
+                        spacing="2", align="center",
+                    ),
+                ),
+                on_click=rx.cond(
+                    EngrafoState.ai_loading,
+                    EngrafoState.noop,
+                    EngrafoState.open_generate_modal,
+                ),
+                disabled=EngrafoState.ai_loading,
+                background=rx.cond(
+                    EngrafoState.ai_loading,
+                    "rgba(139,92,246,0.15)",
+                    f"linear-gradient(135deg, {C_PURPLE} 0%, #7c3aed 100%)",
+                ),
+                border_radius="12px", color="white", width="100%",
+                font_size="14px", cursor="pointer", padding_y="12px",
+                box_shadow=rx.cond(
+                    EngrafoState.ai_loading,
+                    "none",
+                    "0 4px 16px rgba(139,92,246,0.35)",
+                ),
+                _hover={"opacity": "0.88", "box_shadow": "0 6px 20px rgba(139,92,246,0.45)"},
+                transition="all 0.2s",
+            ),
+            rx.button(
+                rx.hstack(
+                    rx.icon("check-circle", size=13),
+                    rx.text("Применить к тегам", font_family=SANS, font_size="12px"),
+                    spacing="2", align="center",
+                ),
+                on_click=EngrafoState.apply_ai_steps,
+                disabled=EngrafoState.ai_loading,
+                background="rgba(34,197,94,0.1)",
+                border=f"1px solid rgba(34,197,94,0.3)",
+                border_radius="10px", color=C_GREEN, width="100%",
+                font_size="12px", cursor="pointer", padding_y="8px",
+                _hover={"background": "rgba(34,197,94,0.18)"},
+                transition="all 0.2s",
+            ),
+            spacing="2", width="100%",
+        ),
+        # needs_prompt теги
+        rx.cond(
+            EngrafoState.needs_prompt_tags.length() > 0,
+            rx.vstack(
+                rx.text("Нужен промпт:", font_size="10px", color=C_MUTED,
+                        font_weight="600", font_family=SANS,
+                        text_transform="uppercase", letter_spacing="0.8px"),
+                rx.foreach(
+                    EngrafoState.needs_prompt_tags,
+                    lambda tag: rx.button(
+                        rx.hstack(
+                            rx.icon("edit-3", size=10),
+                            rx.text(tag, font_size="11px", font_family=SANS),
+                            spacing="1", align="center",
+                        ),
+                        on_click=EngrafoState.open_ai_prompt_dialog(tag),
+                        background="rgba(251,146,60,0.1)",
+                        border="1px solid rgba(251,146,60,0.3)",
+                        border_radius="8px", color="#fb923c",
+                        font_size="11px", cursor="pointer", width="100%",
+                        padding_y="5px",
+                        _hover={"background": "rgba(251,146,60,0.18)"},
+                    ),
+                ),
+                spacing="1", width="100%",
+            ),
+        ),
+        rx.divider(border_color=C_BORDER, opacity="0.5"),
+        # Файлы контекста
+        rx.cond(
+            EngrafoState.context_files.length() > 0,
+            rx.vstack(
+                rx.foreach(
+                    EngrafoState.context_files,
+                    lambda f: rx.hstack(
+                        rx.box(
+                            rx.text(
+                                f["ext"].upper().replace(".", ""),
+                                font_size="8px", font_weight="700",
+                                color=C_CYAN, font_family=SANS,
+                            ),
+                            background="rgba(34,242,239,0.10)",
+                            border="1px solid rgba(34,242,239,0.20)",
+                            border_radius="4px", padding="1px 4px",
+                            flex_shrink="0",
+                        ),
+                        rx.text(f["name"], font_size="11px", color=C_TEXT,
+                                font_family=SANS, flex="1", no_of_lines=1),
+                        rx.box(
+                            rx.icon("x", size=10, color=C_ERROR),
+                            on_click=EngrafoState.delete_context_file(f["name"]),
+                            cursor="pointer", border_radius="4px", padding="2px",
+                            _hover={"background": "rgba(255,77,106,0.12)"},
+                            display="flex", align_items="center", flex_shrink="0",
+                        ),
+                        spacing="2", align="center", width="100%",
+                    ),
+                ),
+                spacing="1", width="100%",
+            ),
+        ),
+        rx.button(
+            rx.hstack(
+                rx.icon("upload-cloud", size=12),
+                rx.text("Загрузить файлы", font_size="12px", font_family=SANS),
+                spacing="1", align="center",
+            ),
+            on_click=EngrafoState.open_context_upload,
+            background="rgba(34,242,239,0.07)",
+            border="1px solid rgba(34,242,239,0.20)",
+            border_radius="10px", color=C_CYAN,
+            padding="7px 12px", cursor="pointer",
+            width="100%",
+            _hover={"background": "rgba(34,242,239,0.13)"},
+        ),
+        spacing="2", width="100%",
+    )
+
+
 def _sidebar() -> rx.Component:
     return rx.box(
         rx.vstack(
@@ -963,6 +1281,7 @@ def _sidebar() -> rx.Component:
             _card(_sidebar_template(), padding="16px", width="100%"),
             _card(_sidebar_profiles(), padding="16px", width="100%"),
             _card(_sidebar_versions(), padding="16px", width="100%"),
+            _card(_sidebar_context(), padding="16px", width="100%"),
             spacing="3",
             width="100%",
             align="start",
@@ -984,21 +1303,6 @@ def _tags_panel() -> rx.Component:
                 rx.text("Поля шаблона", font_size="14px", font_weight="700",
                         font_family=SANS, color=C_TEXT),
                 rx.spacer(),
-                # Кнопка загрузки файлов контекста
-                rx.button(
-                    rx.hstack(
-                        rx.icon("folder-open", size=13),
-                        rx.text("Контекст", font_size="11px", font_family=SANS, font_weight="500"),
-                        spacing="1", align="center",
-                    ),
-                    on_click=EngrafoState.open_context_upload,
-                    background="rgba(34,242,239,0.07)",
-                    border=f"1px solid rgba(34,242,239,0.20)",
-                    border_radius="8px", color=C_CYAN,
-                    padding="4px 10px", cursor="pointer",
-                    _hover={"background": "rgba(34,242,239,0.13)"},
-                    margin_right="1",
-                ),
                 rx.cond(
                     EngrafoState.has_tags,
                     rx.hstack(
@@ -1047,12 +1351,30 @@ def _tags_panel() -> rx.Component:
             # Fields — только выбранные
             rx.cond(
                 EngrafoState.has_tags,
-                rx.vstack(
-                    rx.foreach(EngrafoState.visible_tag_entries, _tag_field),
-                    spacing="2",
-                    padding="4px 14px 24px",
-                    width="100%",
-                    key=EngrafoState.form_key.to_string(),
+                rx.cond(
+                    EngrafoState.visible_tag_entries.length() > 0,
+                    rx.vstack(
+                        rx.foreach(EngrafoState.visible_tag_entries, _tag_field),
+                        spacing="2",
+                        padding="4px 14px 24px",
+                        width="100%",
+                        key=EngrafoState.form_key.to_string(),
+                    ),
+                    # All tags deselected — hint
+                    rx.vstack(
+                        rx.box(
+                            rx.icon("tag", size=32, color=C_MUTED2),
+                            background="rgba(255,255,255,0.03)",
+                            border_radius="16px", padding="18px",
+                            display="flex", align_items="center",
+                        ),
+                        rx.text("Выберите тег для редактирования",
+                                font_size="13px", font_weight="600",
+                                color=C_MUTED, font_family=SANS),
+                        rx.text("Нажмите на один из чипов выше",
+                                font_size="12px", color=C_MUTED2, font_family=SANS),
+                        spacing="2", align="center", padding="40px 24px",
+                    ),
                 ),
                 rx.vstack(
                     rx.box(
@@ -1329,6 +1651,460 @@ def _image_picker() -> rx.Component:
     )
 
 
+# ── Generate modal ─────────────────────────────────────────────────────────
+
+def _gen_tag_chip(row: dict) -> rx.Component:
+    """Чип тега в левой колонке модала генерации."""
+    is_selected = row["selected"] == "true"
+    has_prompt  = row["has_prompt"] == "true"
+
+    return rx.hstack(
+        # Checkbox
+        rx.box(
+            rx.cond(
+                is_selected,
+                rx.icon("check", size=10, color=C_CYAN),
+                rx.box(),
+            ),
+            width="16px", height="16px", flex_shrink="0",
+            border_radius="4px",
+            border=rx.cond(is_selected, f"1px solid {C_CYAN}", "1px solid rgba(255,255,255,0.15)"),
+            background=rx.cond(is_selected, "rgba(34,242,239,0.12)", "transparent"),
+            display="flex", align_items="center", justify_content="center",
+            transition="all 0.15s ease",
+        ),
+        rx.vstack(
+            rx.text(row["label"], font_size="12px", font_weight="600",
+                    color=rx.cond(is_selected, C_TEXT, C_MUTED),
+                    font_family=SANS, no_of_lines=1),
+            rx.text(row["key"], font_size="9px", color=C_MUTED2, font_family=MONO),
+            spacing="0", align="start", flex="1",
+        ),
+        rx.cond(
+            has_prompt,
+            rx.box(width="6px", height="6px", border_radius="50%",
+                   background=C_GREEN, flex_shrink="0"),
+            rx.box(width="6px", height="6px", border_radius="50%",
+                   background="#fb923c", flex_shrink="0"),
+        ),
+        spacing="2", align="center", width="100%",
+        padding="7px 10px", border_radius="8px",
+        cursor="pointer",
+        background=rx.cond(is_selected, "rgba(34,242,239,0.05)", "transparent"),
+        border=rx.cond(
+            is_selected,
+            "1px solid rgba(34,242,239,0.14)",
+            "1px solid transparent",
+        ),
+        transition="all 0.12s ease",
+        on_click=EngrafoState.toggle_generate_key(row["key"]),
+        _hover={"background": "rgba(34,242,239,0.07)", "border_color": "rgba(34,242,239,0.18)"},
+    )
+
+
+def _gen_custom_prompt_row(row: dict) -> rx.Component:
+    """Поле кастомного промпта для тега без системного (в правой части)."""
+    is_selected = row["selected"] == "true"
+    has_no_prompt = row["has_prompt"] == "false"
+
+    return rx.cond(
+        is_selected & has_no_prompt,
+        rx.vstack(
+            rx.hstack(
+                rx.icon("triangle-alert", size=11, color="#fb923c"),
+                rx.text(row["label"], font_size="11px", font_weight="700",
+                        color="#fb923c", font_family=SANS),
+                rx.text("— нет промпта", font_size="11px", color=C_MUTED, font_family=SANS),
+                spacing="1", align="center",
+            ),
+            rx.el.textarea(
+                placeholder="Опиши что нужно сгенерировать...",
+                value=row["custom_prompt"],
+                on_change=EngrafoState.set_generate_custom_prompt(row["key"]),
+                rows="3",
+                style={
+                    "width": "100%", "background": "rgba(251,146,60,0.04)",
+                    "border": "1px solid rgba(251,146,60,0.25)",
+                    "border_radius": "8px", "color": C_TEXT,
+                    "font_family": SANS, "font_size": "12px",
+                    "padding": "8px 10px", "resize": "vertical", "outline": "none",
+                },
+            ),
+            spacing="2", width="100%",
+            padding="10px 12px",
+            background="rgba(251,146,60,0.04)",
+            border="1px solid rgba(251,146,60,0.15)",
+            border_radius="10px",
+        ),
+    )
+
+
+def _generate_modal() -> rx.Component:
+    """Модальное окно выбора тегов для AI-генерации или ручного режима. 2-колоночный layout."""
+    is_ai     = EngrafoState.generate_mode == "ai"
+    is_manual = EngrafoState.generate_mode == "manual"
+    has_ctx_url = EngrafoState.manual_context_url != ""
+
+    # ── Правая панель: AI режим ──
+    _right_ai = rx.vstack(
+        # Переключатель режима
+        rx.hstack(
+            rx.box(
+                rx.hstack(
+                    rx.icon("bot", size=13, color=rx.cond(is_ai, C_PURPLE, C_MUTED)),
+                    rx.text("AI (авто)", font_size="12px",
+                            font_weight=rx.cond(is_ai, "700", "500"),
+                            color=rx.cond(is_ai, C_TEXT, C_MUTED), font_family=SANS),
+                    spacing="1", align="center",
+                ),
+                on_click=EngrafoState.set_generate_mode("ai"),
+                background=rx.cond(is_ai, "rgba(201,35,248,0.12)", "transparent"),
+                border=rx.cond(is_ai, "1px solid rgba(201,35,248,0.30)", f"1px solid {C_BORDER}"),
+                border_radius="8px", padding="7px 14px",
+                cursor="pointer", flex="1", display="flex", justify_content="center",
+                transition="all 0.15s ease",
+            ),
+            rx.box(
+                rx.hstack(
+                    rx.icon("file-pen-line", size=13, color=rx.cond(is_manual, C_CYAN, C_MUTED)),
+                    rx.text("Ручной", font_size="12px",
+                            font_weight=rx.cond(is_manual, "700", "500"),
+                            color=rx.cond(is_manual, C_TEXT, C_MUTED), font_family=SANS),
+                    spacing="1", align="center",
+                ),
+                on_click=EngrafoState.set_generate_mode("manual"),
+                background=rx.cond(is_manual, "rgba(34,242,239,0.08)", "transparent"),
+                border=rx.cond(is_manual, f"1px solid rgba(34,242,239,0.30)", f"1px solid {C_BORDER}"),
+                border_radius="8px", padding="7px 14px",
+                cursor="pointer", flex="1", display="flex", justify_content="center",
+                transition="all 0.15s ease",
+            ),
+            spacing="2", width="100%",
+        ),
+
+        # Поля кастомных промптов для тегов без промпта
+        rx.box(
+            rx.vstack(
+                rx.foreach(EngrafoState.generate_tag_rows, _gen_custom_prompt_row),
+                spacing="2", width="100%",
+            ),
+            max_height="220px",
+            overflow_y="auto",
+            width="100%",
+            class_name="hide-scrollbar",
+        ),
+
+        rx.spacer(),
+
+        # Кнопки AI
+        rx.vstack(
+            rx.button(
+                rx.hstack(
+                    rx.icon("sparkles", size=16),
+                    rx.text("Сгенерировать", font_size="14px", font_family=SANS,
+                            font_weight="700"),
+                    spacing="2", align="center",
+                ),
+                on_click=EngrafoState.run_generate,
+                background=f"linear-gradient(135deg, {C_PURPLE} 0%, #7c3aed 100%)",
+                color="white", border="none",
+                border_radius="12px", font_family=SANS,
+                padding="10px 0", cursor="pointer", width="100%",
+                _hover={"opacity": "0.88"},
+                transition="all 0.2s",
+            ),
+            rx.dialog.close(
+                rx.button(
+                    "Отмена",
+                    on_click=EngrafoState.close_generate_modal,
+                    background="transparent",
+                    border=f"1px solid {C_BORDER}",
+                    border_radius="10px", color=C_MUTED,
+                    font_family=SANS, padding="8px 0",
+                    cursor="pointer", width="100%",
+                    _hover={"background": "rgba(255,255,255,0.06)"},
+                ),
+            ),
+            spacing="2", width="100%",
+        ),
+        spacing="3", width="100%", height="100%",
+    )
+
+    # ── Правая панель: Ручной режим ──
+    _right_manual = rx.vstack(
+        rx.box(
+            rx.hstack(
+                rx.icon("info", size=12, color=C_CYAN),
+                rx.text(
+                    "Создайте файл контекста, отправьте его в свою нейросеть, "
+                    "затем загрузите ответный ans.md",
+                    font_size="11px", color=C_MUTED, font_family=SANS, line_height="1.5",
+                ),
+                spacing="2", align="start",
+            ),
+            padding="10px 12px",
+            background="rgba(34,242,239,0.05)",
+            border="1px solid rgba(34,242,239,0.15)",
+            border_radius="8px", width="100%",
+        ),
+
+        # Шаг 1
+        rx.vstack(
+            rx.hstack(
+                rx.box(
+                    rx.text("1", font_size="11px", font_weight="700",
+                            color=C_CYAN, font_family=SANS),
+                    width="22px", height="22px", border_radius="50%",
+                    background="rgba(34,242,239,0.12)",
+                    border="1px solid rgba(34,242,239,0.25)",
+                    display="flex", align_items="center",
+                    justify_content="center", flex_shrink="0",
+                ),
+                rx.text("Создать файл контекста для нейросети",
+                        font_size="12px", font_weight="600",
+                        color=C_TEXT, font_family=SANS),
+                spacing="2", align="center",
+            ),
+            rx.hstack(
+                rx.button(
+                    rx.hstack(
+                        rx.icon("file-plus", size=13),
+                        rx.text("Создать ai_context.md", font_family=SANS, font_size="12px"),
+                        spacing="1", align="center",
+                    ),
+                    on_click=EngrafoState.build_ai_context_file,
+                    background="rgba(34,242,239,0.08)",
+                    border="1px solid rgba(34,242,239,0.25)",
+                    border_radius="10px", color=C_CYAN,
+                    padding="7px 14px", cursor="pointer", flex="1",
+                    _hover={"background": "rgba(34,242,239,0.15)"},
+                ),
+                rx.cond(
+                    has_ctx_url,
+                    rx.el.a(
+                        rx.hstack(
+                            rx.icon("download", size=13),
+                            rx.text("Скачать", font_family=SANS, font_size="12px"),
+                            spacing="1", align="center",
+                        ),
+                        href=EngrafoState.manual_context_url,
+                        download="ai_context.md",
+                        style={
+                            "background": f"linear-gradient(135deg, {C_CYAN}, #0FA3A0)",
+                            "color": "#040A0A", "border": "none",
+                            "border_radius": "10px", "font_family": SANS,
+                            "font_weight": "700", "font_size": "12px",
+                            "padding": "7px 14px", "cursor": "pointer",
+                            "text_decoration": "none", "display": "flex",
+                            "align_items": "center", "flex_shrink": "0",
+                        },
+                    ),
+                ),
+                spacing="2", align="center", width="100%",
+            ),
+            spacing="2", width="100%",
+            padding="12px", border_radius="10px",
+            background="rgba(34,242,239,0.03)",
+            border=f"1px solid rgba(34,242,239,0.10)",
+        ),
+
+        # Шаг 2
+        rx.vstack(
+            rx.hstack(
+                rx.box(
+                    rx.text("2", font_size="11px", font_weight="700",
+                            color=C_PURPLE, font_family=SANS),
+                    width="22px", height="22px", border_radius="50%",
+                    background="rgba(201,35,248,0.12)",
+                    border="1px solid rgba(201,35,248,0.25)",
+                    display="flex", align_items="center",
+                    justify_content="center", flex_shrink="0",
+                ),
+                rx.text("Загрузить ответ нейросети",
+                        font_size="12px", font_weight="600",
+                        color=C_TEXT, font_family=SANS),
+                spacing="2", align="center",
+            ),
+            rx.hstack(
+                rx.upload(
+                    rx.hstack(
+                        rx.icon("upload", size=13,
+                                color=rx.cond(
+                                    rx.selected_files("ans_upload").length() > 0,
+                                    C_PURPLE, C_MUTED,
+                                )),
+                        rx.text(
+                            rx.cond(
+                                rx.selected_files("ans_upload").length() > 0,
+                                rx.selected_files("ans_upload")[0],
+                                "ans.md / .txt",
+                            ),
+                            font_family=SANS, font_size="12px",
+                            color=rx.cond(
+                                rx.selected_files("ans_upload").length() > 0,
+                                C_TEXT, C_MUTED,
+                            ),
+                            no_of_lines=1,
+                        ),
+                        spacing="1", align="center",
+                    ),
+                    id="ans_upload",
+                    accept={".md": ["text/markdown", "text/plain"], ".txt": ["text/plain"]},
+                    max_files=1,
+                    border=rx.cond(
+                        rx.selected_files("ans_upload").length() > 0,
+                        "1px dashed rgba(201,35,248,0.40)",
+                        f"1px dashed {C_BORDER}",
+                    ),
+                    border_radius="10px", background="transparent",
+                    padding="7px 12px", cursor="pointer", flex="1",
+                    _hover={"border_color": "rgba(201,35,248,0.35)"},
+                ),
+                rx.button(
+                    rx.hstack(
+                        rx.icon("check", size=13),
+                        rx.text("Применить", font_family=SANS, font_size="12px"),
+                        spacing="1", align="center",
+                    ),
+                    on_click=EngrafoState.upload_ans_md(
+                        rx.upload_files(upload_id="ans_upload")  # type: ignore
+                    ),
+                    background=f"linear-gradient(135deg, {C_PURPLE} 0%, #7c3aed 100%)",
+                    color="white", border="none", border_radius="10px",
+                    font_family=SANS, font_weight="600", font_size="12px",
+                    padding="7px 14px", cursor="pointer", flex_shrink="0",
+                    _hover={"opacity": "0.85"},
+                ),
+                spacing="2", align="center", width="100%",
+            ),
+            spacing="2", width="100%",
+            padding="12px", border_radius="10px",
+            background="rgba(201,35,248,0.03)",
+            border=f"1px solid rgba(201,35,248,0.10)",
+        ),
+
+        rx.spacer(),
+        rx.dialog.close(
+            rx.button(
+                "Закрыть",
+                on_click=EngrafoState.close_generate_modal,
+                background="transparent",
+                border=f"1px solid {C_BORDER}",
+                border_radius="10px", color=C_MUTED,
+                font_family=SANS, padding="8px 0",
+                cursor="pointer", width="100%",
+                _hover={"background": "rgba(255,255,255,0.06)"},
+            ),
+        ),
+        spacing="3", width="100%", height="100%",
+    )
+
+    return rx.dialog.root(
+        rx.dialog.content(
+            rx.vstack(
+                # ── Header ────────────────────────────────────────────────
+                rx.hstack(
+                    rx.box(
+                        rx.icon("sparkles", size=18, color=C_PURPLE),
+                        background="rgba(201,35,248,0.10)",
+                        border_radius="10px", padding="9px",
+                        display="flex", align_items="center",
+                    ),
+                    rx.vstack(
+                        rx.dialog.title(
+                            "Генерация тегов",
+                            font_size="17px", font_weight="700",
+                            font_family=SANS, color=C_TEXT, margin="0",
+                        ),
+                        rx.text("Выберите теги слева — теги из never_generate скрыты",
+                                font_size="11px", color=C_MUTED, font_family=SANS),
+                        spacing="0", align="start",
+                    ),
+                    rx.spacer(),
+                    rx.dialog.close(
+                        rx.icon("x", size=16, color=C_MUTED, cursor="pointer"),
+                        on_click=EngrafoState.close_generate_modal,
+                    ),
+                    spacing="3", align="center", width="100%",
+                ),
+
+                # ── 2-колоночный body ─────────────────────────────────────
+                rx.hstack(
+                    # Левая: список тегов
+                    rx.box(
+                        rx.vstack(
+                            rx.hstack(
+                                rx.text("Теги", font_size="10px", font_weight="700",
+                                        color=C_MUTED, font_family=SANS,
+                                        text_transform="uppercase", letter_spacing="0.8px"),
+                                rx.spacer(),
+                                rx.hstack(
+                                    rx.box(width="8px", height="8px", border_radius="50%",
+                                           background=C_GREEN),
+                                    rx.text("есть промпт", font_size="9px",
+                                            color=C_MUTED, font_family=SANS),
+                                    rx.box(width="8px", height="8px", border_radius="50%",
+                                           background="#fb923c"),
+                                    rx.text("нет промпта", font_size="9px",
+                                            color=C_MUTED, font_family=SANS),
+                                    spacing="1", align="center",
+                                ),
+                                align="center", width="100%",
+                                padding_bottom="6px",
+                                border_bottom=f"1px solid {C_BORDER}",
+                            ),
+                            rx.box(
+                                rx.vstack(
+                                    rx.foreach(EngrafoState.generate_tag_rows, _gen_tag_chip),
+                                    spacing="1", width="100%",
+                                ),
+                                overflow_y="auto",
+                                flex="1",
+                                class_name="hide-scrollbar",
+                            ),
+                            spacing="2", width="100%", height="100%",
+                        ),
+                        width="220px",
+                        flex_shrink="0",
+                        height="420px",
+                        padding="14px",
+                        background="rgba(255,255,255,0.02)",
+                        border=f"1px solid {C_BORDER}",
+                        border_radius="14px",
+                        display="flex",
+                        flex_direction="column",
+                    ),
+
+                    # Правая: настройки + кнопки
+                    rx.box(
+                        rx.cond(is_ai, _right_ai, _right_manual),
+                        flex="1",
+                        height="420px",
+                        padding="14px",
+                        background="rgba(255,255,255,0.01)",
+                        border=f"1px solid {C_BORDER}",
+                        border_radius="14px",
+                        display="flex",
+                        flex_direction="column",
+                    ),
+
+                    spacing="3", align="start", width="100%",
+                ),
+
+                spacing="4", width="100%",
+            ),
+            background=C_CARD,
+            border=f"1px solid {C_BORDER}",
+            border_radius="20px",
+            padding="24px",
+            max_width="760px",
+            width="94vw",
+            backdrop_filter="blur(20px)",
+        ),
+        open=EngrafoState.show_generate_modal,
+    )
+
+
 # ── Toasts ─────────────────────────────────────────────────────────────────
 
 def _toasts() -> rx.Component:
@@ -1394,8 +2170,10 @@ def _toasts() -> rx.Component:
 
 def engrafo_editor_page() -> rx.Component:
     return rx.box(
-        rx.script(src="/engrafo_editor.js"),
+        rx.el.link(rel="stylesheet", href="/quill.snow.css"),
         rx.el.link(rel="stylesheet", href="/engrafo.css"),
+        rx.script(src="/quill.js"),
+        rx.script(src="/engrafo_editor.js"),
         # Proxy-textarea для Ctrl+V картинок (JS пишет сюда, Reflex читает)
         rx.el.textarea(
             id="engrafo-paste-proxy",
@@ -1414,8 +2192,28 @@ def engrafo_editor_page() -> rx.Component:
         _restore_version_confirm_dialog(),
         _expand_editor_dialog(),
         _context_upload_dialog(),
+        _global_popup_dialog(),
+        _ai_prompt_dialog(),
+        _generate_modal(),
         _image_picker(),
         _toasts(),
+
+        # ── Hidden proxies for JS → Reflex sync ───────────────────────────────
+        # HTML content proxy: JS writes 'KEY|||html' here on contenteditable blur
+        rx.el.textarea(
+            id="engrafo-html-proxy",
+            on_change=EngrafoState.handle_html_update,
+            style={"display": "none"},
+            aria_hidden="true",
+        ),
+        # Hidden file input for image insertion at cursor (handled entirely in JS)
+        rx.el.input(
+            id="engrafo-img-file-input",
+            type="file",
+            accept="image/png,image/jpeg,image/webp,image/gif",
+            style={"display": "none"},
+            aria_hidden="true",
+        ),
 
         rx.box(
             rx.el.div(

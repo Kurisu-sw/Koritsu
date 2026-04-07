@@ -785,25 +785,32 @@ def empty_state() -> rx.Component:
                 rx.box(
                     rx.box(
                         rx.icon("code-2", size=13, color=MUTED),
-                        rx.el.select(
-                            rx.foreach(
-                                FragmosState.language_list,
-                                lambda l: rx.el.option(l, value=l),
+                        rx.foreach(
+                            FragmosState.language_list,
+                            lambda lang: rx.button(
+                                lang,
+                                font_size="11px", font_weight="700",
+                                font_family=MONO,
+                                color=rx.cond(
+                                    FragmosState.selected_language == lang,
+                                    "white", MUTED,
+                                ),
+                                background=rx.cond(
+                                    FragmosState.selected_language == lang,
+                                    ACCENT, "transparent",
+                                ),
+                                border=rx.cond(
+                                    FragmosState.selected_language == lang,
+                                    "none", f"1px solid {BORDER}",
+                                ),
+                                padding="4px 12px",
+                                border_radius="8px",
+                                cursor="pointer",
+                                transition="all 0.15s",
+                                on_click=FragmosState.set_language(lang),
                             ),
-                            value=FragmosState.selected_language,
-                            on_change=FragmosState.set_language,
-                            style={
-                                "background": "transparent",
-                                "color": TEXT,
-                                "border": "none",
-                                "font_size": "12px",
-                                "font_weight": "500",
-                                "outline": "none",
-                                "cursor": "pointer",
-                                "font_family": SANS,
-                            },
                         ),
-                        display="flex", align_items="center", gap="6px",
+                        display="flex", align_items="center", gap="4px",
                         padding="7px 12px",
                         background=PANEL,
                         border=f"1px solid {BORDER}",
@@ -813,25 +820,32 @@ def empty_state() -> rx.Component:
                     ),
                     rx.box(
                         rx.icon("cpu", size=13, color=MUTED),
-                        rx.el.select(
-                            rx.foreach(
-                                FragmosState.model_list,
-                                lambda m: rx.el.option(m, value=m),
+                        rx.foreach(
+                            FragmosState.model_list,
+                            lambda mode: rx.button(
+                                mode,
+                                font_size="11px", font_weight="700",
+                                font_family=MONO,
+                                color=rx.cond(
+                                    FragmosState.selected_model == mode,
+                                    "white", MUTED,
+                                ),
+                                background=rx.cond(
+                                    FragmosState.selected_model == mode,
+                                    ACCENT, "transparent",
+                                ),
+                                border=rx.cond(
+                                    FragmosState.selected_model == mode,
+                                    "none", f"1px solid {BORDER}",
+                                ),
+                                padding="4px 12px",
+                                border_radius="8px",
+                                cursor="pointer",
+                                transition="all 0.15s",
+                                on_click=FragmosState.set_model(mode),
                             ),
-                            value=FragmosState.selected_model,
-                            on_change=FragmosState.set_model,
-                            style={
-                                "background": "transparent",
-                                "color": TEXT,
-                                "border": "none",
-                                "font_size": "12px",
-                                "font_weight": "500",
-                                "outline": "none",
-                                "cursor": "pointer",
-                                "font_family": SANS,
-                            },
                         ),
-                        display="flex", align_items="center", gap="6px",
+                        display="flex", align_items="center", gap="4px",
                         padding="7px 12px",
                         background=PANEL,
                         border=f"1px solid {BORDER}",

@@ -451,6 +451,172 @@ def _delete_confirm_dialog() -> rx.Component:
     )
 
 
+# ── Global tags tab ───────────────────────────────────────────────────────────
+
+def _global_tag_row(entry: dict) -> rx.Component:
+    return rx.hstack(
+        rx.text(
+            entry["key"],
+            font_size="13px", font_family=SANS, font_weight="600",
+            color=ACCENT, min_width="160px", flex_shrink="0",
+        ),
+        rx.input(
+            default_value=entry["value"],
+            on_blur=lambda v: EngrafoState.set_global_tag_value(entry["key"], v),
+            placeholder="значение...",
+            background=PANEL,
+            border=f"1px solid {BORDER}",
+            border_radius="8px",
+            color=TEXT,
+            font_family=SANS,
+            font_size="13px",
+            flex="1",
+            _focus={"border_color": ACCENT, "outline": "none"},
+        ),
+        rx.button(
+            rx.icon("trash-2", size=13, color=ERROR),
+            on_click=EngrafoState.delete_global_tag(entry["key"]),
+            background="transparent",
+            border=f"1px solid {BORDER}",
+            border_radius="8px",
+            padding="6px 10px",
+            cursor="pointer",
+            _hover={"background": f"{ERROR}22", "border_color": ERROR},
+        ),
+        spacing="2", align="center", width="100%",
+    )
+
+
+def _global_tags_tab() -> rx.Component:
+    return rx.vstack(
+        # Header
+        rx.hstack(
+            rx.vstack(
+                rx.text("Глобальные теги", font_size="16px", font_weight="700",
+                        font_family=SANS, color=TEXT),
+                rx.text(
+                    "Значения по умолчанию — автоматически подставляются в новые отчёты",
+                    font_size="13px", color=MUTED, font_family=SANS,
+                ),
+                spacing="0", align="start",
+            ),
+            width="100%",
+        ),
+
+        # Tag rows
+        rx.cond(
+            EngrafoState.global_tags.length() > 0,
+            rx.vstack(
+                rx.foreach(EngrafoState.global_tags, _global_tag_row),
+                spacing="2", width="100%",
+            ),
+            rx.box(
+                rx.vstack(
+                    rx.icon("tag", size=32, color=MUTED),
+                    rx.text("Нет глобальных тегов", font_size="15px",
+                            font_weight="600", font_family=SANS, color=TEXT),
+                    rx.text("Добавьте теги ниже, чтобы они автоматически заполнялись в новых отчётах",
+                            font_size="13px", color=MUTED, font_family=SANS,
+                            text_align="center"),
+                    spacing="2", align="center",
+                ),
+                padding="40px 32px",
+                background=PANEL,
+                border=f"1px solid {BORDER}",
+                border_radius="14px",
+                width="100%",
+                display="flex",
+                align_items="center",
+                justify_content="center",
+            ),
+        ),
+
+        # Add new tag form
+        rx.box(
+            rx.vstack(
+                rx.text("Добавить тег", font_size="12px", font_weight="600",
+                        color=MUTED, font_family=SANS, text_transform="uppercase",
+                        letter_spacing="0.5px"),
+                rx.hstack(
+                    rx.input(
+                        placeholder="ключ_тега (напр. фио)",
+                        value=EngrafoState.global_tag_new_key,
+                        on_change=EngrafoState.set_global_tag_new_key,
+                        background=PANEL,
+                        border=f"1px solid {BORDER}",
+                        border_radius="8px",
+                        color=TEXT,
+                        font_family=SANS,
+                        font_size="13px",
+                        flex="1",
+                        _focus={"border_color": ACCENT, "outline": "none"},
+                    ),
+                    rx.input(
+                        placeholder="значение по умолчанию",
+                        value=EngrafoState.global_tag_new_value,
+                        on_change=EngrafoState.set_global_tag_new_value,
+                        background=PANEL,
+                        border=f"1px solid {BORDER}",
+                        border_radius="8px",
+                        color=TEXT,
+                        font_family=SANS,
+                        font_size="13px",
+                        flex="2",
+                        _focus={"border_color": ACCENT, "outline": "none"},
+                    ),
+                    rx.button(
+                        rx.hstack(
+                            rx.icon("plus", size=15),
+                            rx.text("Добавить", font_size="13px", font_family=SANS),
+                            spacing="1", align="center",
+                        ),
+                        on_click=EngrafoState.add_global_tag,
+                        background=BTN_GRADIENT,
+                        color="white",
+                        border="none",
+                        border_radius="8px",
+                        padding="8px 16px",
+                        cursor="pointer",
+                        _hover={"opacity": "0.85"},
+                        flex_shrink="0",
+                    ),
+                    spacing="2", width="100%", flex_wrap="wrap",
+                ),
+                spacing="2", width="100%",
+            ),
+            padding="16px 20px",
+            background=PANEL,
+            border=f"1px solid {BORDER}",
+            border_radius="12px",
+            width="100%",
+        ),
+
+        spacing="4", width="100%", align="start",
+    )
+
+
+# ── Tab navigation ─────────────────────────────────────────────────────────────
+
+def _engrafo_tab_button(label: str, tab: str, icon_name: str) -> rx.Component:
+    is_active = EngrafoState.engrafo_tab == tab
+    return rx.button(
+        rx.hstack(
+            rx.icon(icon_name, size=14),
+            rx.text(label, font_size="13px", font_family=SANS, font_weight="600"),
+            spacing="1", align="center",
+        ),
+        on_click=EngrafoState.set_engrafo_tab(tab),
+        background=rx.cond(is_active, BTN_GRADIENT, "transparent"),
+        color=rx.cond(is_active, "white", MUTED),
+        border=rx.cond(is_active, "none", f"1px solid {BORDER}"),
+        border_radius="10px",
+        padding="7px 16px",
+        cursor="pointer",
+        transition="all 0.15s",
+        _hover=rx.cond(is_active, {"opacity": "0.9"}, {"color": TEXT, "border_color": ACCENT}),
+    )
+
+
 # ── Main page ──────────────────────────────────────────────────────────────────
 
 def engrafo_page() -> rx.Component:
@@ -470,28 +636,25 @@ def engrafo_page() -> rx.Component:
 
                 # Title row
                 rx.hstack(
-                    rx.vstack(
-                        rx.hstack(
-                            rx.box(
-                                rx.icon("file-text", size=20, color=ACCENT),
-                                width="38px", height="38px",
-                                background=ACCENT2,
-                                border=f"1px solid {ACCENT}44",
-                                border_radius="12px",
-                                display="flex",
-                                align_items="center",
-                                justify_content="center",
-                            ),
-                            rx.vstack(
-                                rx.text("Engrafo", font_size="22px", font_weight="700",
-                                        font_family=SANS, color=TEXT, line_height="1"),
-                                rx.text("Генератор отчётов из docx-шаблонов",
-                                        font_size="13px", color=MUTED, font_family=SANS),
-                                spacing="0", align="start",
-                            ),
-                            spacing="3", align="center",
+                    rx.hstack(
+                        rx.box(
+                            rx.icon("file-text", size=20, color=ACCENT),
+                            width="38px", height="38px",
+                            background=ACCENT2,
+                            border=f"1px solid {ACCENT}44",
+                            border_radius="12px",
+                            display="flex",
+                            align_items="center",
+                            justify_content="center",
                         ),
-                        spacing="1", align="start",
+                        rx.vstack(
+                            rx.text("Engrafo", font_size="22px", font_weight="700",
+                                    font_family=SANS, color=TEXT, line_height="1"),
+                            rx.text("Генератор отчётов из docx-шаблонов",
+                                    font_size="13px", color=MUTED, font_family=SANS),
+                            spacing="0", align="start",
+                        ),
+                        spacing="3", align="center",
                     ),
                     rx.spacer(),
                     rx.hstack(
@@ -535,6 +698,13 @@ def engrafo_page() -> rx.Component:
                     gap="8px",
                 ),
 
+                # Tab navigation
+                rx.hstack(
+                    _engrafo_tab_button("Отчёты", "reports", "file-text"),
+                    _engrafo_tab_button("Глобальные теги", "global_tags", "tag"),
+                    spacing="2",
+                ),
+
                 # Success/error banner
                 rx.cond(
                     EngrafoState.success_msg != "",
@@ -555,57 +725,63 @@ def engrafo_page() -> rx.Component:
                     ),
                 ),
 
-                # Reports list
+                # Tab content
                 rx.cond(
-                    EngrafoState.has_reports,
-                    rx.vstack(
-                        rx.text(
-                            "Отчёты",
-                            font_size="13px", color=MUTED, font_weight="500",
-                            font_family=SANS, letter_spacing="0.5px",
-                            text_transform="uppercase",
-                        ),
+                    EngrafoState.engrafo_tab == "reports",
+                    # Reports list
+                    rx.cond(
+                        EngrafoState.has_reports,
                         rx.vstack(
-                            rx.foreach(EngrafoState.reports, _report_card),
-                            spacing="2", width="100%",
-                        ),
-                        spacing="3", width="100%", align="start",
-                    ),
-                    # Empty state
-                    rx.box(
-                        rx.vstack(
-                            rx.icon("inbox", size=48, color=MUTED),
-                            rx.text("Нет отчётов", font_size="18px", font_weight="600",
-                                    font_family=SANS, color=TEXT),
-                            rx.text("Создайте первый отчёт, нажав кнопку выше",
-                                    font_size="14px", color=MUTED, font_family=SANS),
-                            rx.button(
-                                rx.hstack(
-                                    rx.icon("plus", size=16),
-                                    rx.text("Новый отчёт", font_family=SANS),
-                                    spacing="1", align="center",
-                                ),
-                                on_click=EngrafoState.open_new_report_dialog,
-                                background=BTN_GRADIENT,
-                                color="white",
-                                border="none",
-                                border_radius="10px",
-                                padding="10px 24px",
-                                cursor="pointer",
-                                margin_top="8px",
-                                _hover={"opacity": "0.85"},
+                            rx.text(
+                                "Отчёты",
+                                font_size="13px", color=MUTED, font_weight="500",
+                                font_family=SANS, letter_spacing="0.5px",
+                                text_transform="uppercase",
                             ),
-                            spacing="3", align="center",
+                            rx.vstack(
+                                rx.foreach(EngrafoState.reports, _report_card),
+                                spacing="2", width="100%",
+                            ),
+                            spacing="3", width="100%", align="start",
                         ),
-                        padding="64px 32px",
-                        background=PANEL,
-                        border=f"1px solid {BORDER}",
-                        border_radius="16px",
-                        width="100%",
-                        display="flex",
-                        align_items="center",
-                        justify_content="center",
+                        # Empty state
+                        rx.box(
+                            rx.vstack(
+                                rx.icon("inbox", size=48, color=MUTED),
+                                rx.text("Нет отчётов", font_size="18px", font_weight="600",
+                                        font_family=SANS, color=TEXT),
+                                rx.text("Создайте первый отчёт, нажав кнопку выше",
+                                        font_size="14px", color=MUTED, font_family=SANS),
+                                rx.button(
+                                    rx.hstack(
+                                        rx.icon("plus", size=16),
+                                        rx.text("Новый отчёт", font_family=SANS),
+                                        spacing="1", align="center",
+                                    ),
+                                    on_click=EngrafoState.open_new_report_dialog,
+                                    background=BTN_GRADIENT,
+                                    color="white",
+                                    border="none",
+                                    border_radius="10px",
+                                    padding="10px 24px",
+                                    cursor="pointer",
+                                    margin_top="8px",
+                                    _hover={"opacity": "0.85"},
+                                ),
+                                spacing="3", align="center",
+                            ),
+                            padding="64px 32px",
+                            background=PANEL,
+                            border=f"1px solid {BORDER}",
+                            border_radius="16px",
+                            width="100%",
+                            display="flex",
+                            align_items="center",
+                            justify_content="center",
+                        ),
                     ),
+                    # Global tags tab
+                    _global_tags_tab(),
                 ),
 
                 spacing="5",

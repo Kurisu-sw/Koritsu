@@ -38,6 +38,13 @@ def _valid_username(s: str) -> bool:
 
 _MODULES_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), "../modules/fragmos"))
 
+# ── Contextualizer ────────────────────────────────────────────────────────────
+_CONTEXTUALIZER_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), "../modules"))
+if _CONTEXTUALIZER_DIR not in sys.path:
+    sys.path.insert(0, _CONTEXTUALIZER_DIR)
+
+from contextualizer.router import router as ctx_router, ctx_handler  # type: ignore  # noqa: E402
+
 
 async def _fragmos_handler(payload: dict) -> dict:
     """
@@ -92,6 +99,7 @@ async def _fragmos_handler(payload: dict) -> dict:
 
 
 balancer.register_handler("fragmos", _fragmos_handler)
+balancer.register_handler("contextualizer", ctx_handler)
 
 _KLASSIS_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), "../modules/klassis"))
 
@@ -105,6 +113,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 app.include_router(balancer_router)
+app.include_router(ctx_router)
 DB_PATH = os.getenv("DATABASE_NAME", "files/koritsu.db").strip()
 
 

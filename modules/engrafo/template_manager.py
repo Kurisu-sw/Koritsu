@@ -65,11 +65,27 @@ def get_template_path(user_uuid: str, template_id: str) -> Optional[str]:
     return None
 
 
+_TAG_TYPE_PREFIXES = {
+    "global_": "global",
+    "doc_": "doc",
+    "ai_": "ai",
+    "raw_": "raw",
+}
+
+
+def _detect_tag_type(key: str) -> str:
+    """Определить тип тега по префиксу. Без префикса — raw."""
+    for prefix, tag_type in _TAG_TYPE_PREFIXES.items():
+        if key.startswith(prefix):
+            return tag_type
+    return "raw"
+
+
 def extract_tags(template_path: str) -> list[dict]:
     """
     Извлечь теги из docx-шаблона напрямую через XML.
     Поддерживает формат {{key}} и {{key:Подсказка}}.
-    Возвращает список [{"key": "имя", "label": "Подсказка или имя"}].
+    Возвращает список [{"key": "имя", "label": "Подсказка или имя", "type": "global|doc|ai|raw"}].
     """
     import zipfile, re
     try:
@@ -90,7 +106,7 @@ def extract_tags(template_path: str) -> list[dict]:
                 label = raw
             if key and key not in seen:
                 seen[key] = label
-        return [{"key": k, "label": v} for k, v in seen.items()]
+        return [{"key": k, "label": v, "type": _detect_tag_type(k)} for k, v in seen.items()]
     except Exception:
         return []
 
