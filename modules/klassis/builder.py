@@ -146,6 +146,92 @@ def _detect_relations(classes: list[ClassInfo]) -> list[tuple[str, str, str]]:
     return [(src, tgt, rel) for (src, tgt), rel in best.items()]
 
 
+def _edge_side(sx: int, sy: int, sw: int, sh: int,
+               tx: int, ty: int, tw: int, th: int) -> tuple[str, str]:
+    """Return (exit_side, entry_side) based on relative positions of two boxes."""
+    src_cx = sx + sw / 2
+    src_cy = sy + sh / 2
+    tgt_cx = tx + tw / 2
+    tgt_cy = ty + th / 2
+    dx = tgt_cx - src_cx
+    dy = tgt_cy - src_cy
+    if abs(dy) >= abs(dx):
+        return ("top", "bottom") if dy <= 0 else ("bottom", "top")
+    else:
+        return ("left", "right") if dx <= 0 else ("right", "left")
+
+
+def _assign_ports(
+    relations: list[tuple[str, str, str]],
+    positions: dict[str, tuple[int, int]],
+    by_name: dict,
+) -> dict[tuple[str, str], tuple[float, float, float, float]]:
+    """
+    For each relation assigns (exitX, exitY, entryX, entryY) so that multiple
+    arrows leaving/entering the same side of a class are spread out evenly.
+    """
+    exit_map: dict[tuple[str, str], list[tuple[str, str, str]]] = {}
+    entry_map: dict[tuple[str, str], list[tuple[str, str, str]]] = {}
+
+    for src, tgt, rel in relations:
+        if src not in positions or tgt not in positions:
+            continue
+        sx, sy = positions[src]
+        tx, ty = positions[tgt]
+        sh = _class_height(by_name[src])
+        th = _class_height(by_name[tgt])
+        ex_side, en_side = _edge_side(sx, sy, CLASS_W, sh, tx, ty, CLASS_W, th)
+        exit_map.setdefault((src, ex_side), []).append((src, tgt, rel))
+        entry_map.setdefault((tgt, en_side), []).append((src, tgt, rel))
+
+    def _frac(side: str, f: float) -> tuple[float, float]:
+        if side == "top":    return (f, 0.0)
+        if side == "bottom": return (f, 1.0)
+        if side == "left":   return (0.0, f)
+        return (1.0, f)  # right
+
+    exit_frac:  dict[tuple[str, str], tuple[float, float]] = {}
+    entry_frac: dict[tuple[str, str], tuple[float, float]] = {}
+
+    for (cls, side), edges in exit_map.items():
+        n = len(edges)
+        for i, (s, t, _r) in enumerate(edges):
+            exit_frac[(s, t)] = _frac(side, (i + 1) / (n + 1))
+
+    for (cls, side), edges in entry_map.items():
+        n = len(edges)
+        for i, (s, t, _r) in enumerate(edges):
+            entry_frac[(s, t)] = _frac(side, (i + 1) / (n + 1))
+
+    result: dict[tuple[str, str], tuple[float, float, float, float]] = {}
+    for src, tgt, _rel in relations:
+        ex, ey = exit_frac.get((src, tgt), (0.5, 1.0))
+        nx, ny = entry_frac.get((src, tgt), (0.5, 0.0))
+        result[(src, tgt)] = (ex, ey, nx, ny)
+    return result
+
+
+def _edge_style(rel: str, color: str,
+                ex: float, ey: float,
+                nx: float, ny: float) -> str:
+    """Return a draw.io edge style string for the given UML relationship."""
+    pts = (
+        f"exitX={ex:.3f};exitY={ey:.3f};exitDx=0;exitDy=0;"
+        f"entryX={nx:.3f};entryY={ny:.3f};entryDx=0;entryDy=0;"
+    )
+    base = f"html=1;rounded=0;{pts}strokeColor={color};strokeWidth=1.5;"
+    if rel == "inheritance":
+        return base + "endArrow=block;endFill=0;startArrow=none;"
+    if rel == "realization":
+        return base + "endArrow=block;endFill=0;startArrow=none;dashed=1;"
+    if rel == "composition":
+        return base + "startArrow=diamond;startFill=1;endArrow=none;"
+    if rel == "aggregation":
+        return base + "startArrow=diamond;startFill=0;endArrow=none;"
+    # dependency
+    return base + "endArrow=open;endFill=0;dashed=1;startArrow=none;"
+
+
 def _class_height(cls: ClassInfo) -> int:
     h = HEADER_H
     if cls.fields:
@@ -307,8 +393,32 @@ def build_xml(classes: list[ClassInfo]) -> str:
             )
             cur_y += ROW_H
 
-    # ── Edges — временно отключены ────────────────────────────────────────────
-    pass
+    # ── Edges ─────────────────────────────────────────────────────────────────
+    by_name = {c.name: c for c in classes}
+    relations = _detect_relations(classes)
+    ports = _assign_ports(relations, positions, by_name)
+
+    _REL_COLOR = {
+        "inheritance": _COLOR_INHERIT,
+        "realization": _COLOR_REALIZE,
+        "composition": _COLOR_COMPOSE,
+        "aggregation": _COLOR_AGGREGATE,
+        "dependency":  _COLOR_DEPEND,
+    }
+
+    for ei, (src, tgt, rel) in enumerate(relations):
+        if src not in class_ids or tgt not in class_ids:
+            continue
+        sid = class_ids[src]
+        tid = class_ids[tgt]
+        ex, ey, nx, ny = ports.get((src, tgt), (0.5, 1.0, 0.5, 0.0))
+        color = _REL_COLOR.get(rel, _EDGE_COLOR)
+        style = _edge_style(rel, color, ex, ey, nx, ny)
+        cells.append(
+            f'<mxCell id="e{ei}" value="" style="{style}" '
+            f'edge="1" source="{sid}" target="{tid}" parent="1">'
+            f'<mxGeometry relative="1" as="geometry"/></mxCell>'
+        )
 
     body = "\n    ".join(cells)
     return (
